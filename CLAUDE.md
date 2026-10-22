@@ -6,23 +6,26 @@ README.md for the papers, the design, and the full list of predicates.
 ## Checking changes
 
 ```
-elpi -test main.elpi
+make test
 ```
 
-This must exit 0 and print no `FAILED:` line. It needs Elpi 3.8 or later.
+This must succeed and print no `FAILED:` line. It needs Elpi 3.8 or later.
+`make` (the running example) must also still succeed.
 
 ## Layout
 
 One file per language (`linA.elpi`, `linB.elpi`), one per transformation
-(`forward.elpi` J, `erase.elpi` L, `unzip.elpi` U, `transpose.elpi` T), one
+(`forward.elpi` J, `flatten.elpi` and `copyprop.elpi` the cleanup C,
+`erase.elpi` L, `unzip.elpi` U, `transpose.elpi` T), one
 per utility (`lincheckA.elpi`, `evalA.elpi`, `ppA.elpi`, `ppB.elpi`), plus
-`examples.elpi`, `test.elpi`, and `main.elpi`. Each file accumulates the
-files it uses, right after its header comment; Elpi loads a file only once,
-however many files accumulate it. A new file's tests go in `test.elpi` and
-are called from `main`.
+`examples.elpi`, `test.elpi`, `running.elpi` (the running example), and
+two entry points, `run-example.elpi` and `run-tests.elpi`, run by the
+Makefile. Each file accumulates the files it uses, right after its header
+comment; Elpi loads a file only once, however many files accumulate it. A
+new file's tests go in `test.elpi` and are called from `test.all`.
 
 Each file holds one namespace, named after the file (`examples.elpi` holds
-`example` and `exampleB`; `main.elpi` holds `running`). A namespace starts
+`example` and `exampleB`; the two entry points hold only `main`). A namespace starts
 with `shorten` for the names it uses. Don't shorten `sin`, `cos` or `exp` in
 a namespace that uses them with `is`, because the shortened name hides the
 builtin; write `linA.sin` there instead. `linA` and `linB` share names such

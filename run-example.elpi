@@ -1,0 +1,8 @@
+% Entry point: the paper's running example, f(u) = −sin(u), through J, U,
+% T and L.
+%
+% Run with: make   (or: elpi -test run-example.elpi)
+
+accumulate running.
+
+main :- running.show.

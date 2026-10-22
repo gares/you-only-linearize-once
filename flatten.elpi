@@ -1,0 +1,43 @@
+% Step flatten: let-floating (after J)
+%
+% Linear A to Linear A. J's rule JLet puts J(e1) as the bound expression of
+% a let, and J(e1) is often itself a block of lets, so J's output nests
+% lets. flatten floats them out:
+%   let x̄ = (let ȳ = a in b) in c   ⇝   let ȳ = a in let x̄ = b in c
+% and likewise when the bound expression is an unpacking let. In HOAS the
+% variables ȳ cannot occur in c, so no renaming is needed. lets cost
+% nothing, so the result computes the same values at the same cost.
+
+accumulate linA.
+
+namespace flatten {
+
+shorten linA.{
+  nbind, lbind, expr, let, unpack, lunpack, drop, prog, map-nb, map-lb,
+  map-prog }.
+
+% flatten E E': no let in E' has a let or an unpacking let as its bound
+% expression.
+func flatten expr -> expr.
+flatten (let E B) R :- !, flatten E E', map-nb flatten B B', float E' B' R.
+flatten (unpack V B) (unpack V B') :- !, map-nb flatten B B'.
+flatten (lunpack D B) (lunpack D B') :- !, map-lb flatten B B'.
+flatten (drop E) (drop E') :- !, flatten E E'.
+flatten E E.
+
+% float E B: let E in B, with E already flat. If E binds variables and then
+% continues with a body b, the outer binders B move inside: the result is E
+% with its body b replaced by let b in B (floated again, in case b is a let).
+func float expr, nbind expr -> expr.
+float (let E0 B0) B (let E0 B0') :- !, map-nb (float-into B) B0 B0'.
+float (unpack V B0) B (unpack V B0') :- !, map-nb (float-into B) B0 B0'.
+float (lunpack D B0) B (lunpack D B0') :- !, map-lb (float-into B) B0 B0'.
+float E B (let E B).
+
+func float-into nbind expr, expr -> expr.
+float-into B E R :- float E B R.
+
+func flatten-prog prog -> prog.
+flatten-prog P P' :- map-prog flatten P P'.
+
+} % namespace flatten

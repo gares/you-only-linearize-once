@@ -10,6 +10,8 @@ accumulate ppA.
 accumulate ppB.
 accumulate examples.
 accumulate forward.
+accumulate flatten.
+accumulate copyprop.
 accumulate erase.
 accumulate unzip.
 accumulate transpose.
@@ -104,7 +106,7 @@ func erase-tests.
 erase-tests :-
   print "--- linearity erasure L (erase.lerase-prog) ---",
   % L(J(k))(x, 1 ;) computes k and its derivative with no linear code
-  example.k-prog PP, forward.dj-prog PP PJ, erase.lerase-prog PJ PE,
+  example.k-prog PP, j PP PJ, erase.lerase-prog PJ PE,
   prog->string PE SE, print SE,
   check "L(k^J) type-checks" (of-prog PE),
   run PJ [real 3.0] [real 1.0] _ _ CJ,
@@ -161,22 +163,16 @@ linB-tests :-
   check "a non-linear leaf in a linear expression is rejected"
     (pi x\ not (linB.lexpr->A (linB.lleaf (linA.sin x)) _)).
 
-% Drop the last definition of a program (the f.lin of the entry point), so
-% that the last one left, f.nonlin, becomes the entry point.
-func drop-last linA.prog -> linA.prog.
-drop-last (def _ (x\ pnil)) pnil :- !.
-drop-last (def D P) (def D P') :- pi f\ drop-last (P f) (P' f).
-
 % Unzip J(P), and check Theorem 6.2 on it: U(J(P)) type-checks, and running
 % f.nonlin(x ;) and then f.lin(tape ; ẋ) gives the results and the cost of
 % J(P)(x ; ẋ).
 func unzip-check string, linA.prog, list linA.val, list linA.val.
 unzip-check Name P Xs LXs :-
-  forward.dj-prog P PJ, unzip.unzip-prog PJ PU, linB.to-linA PU A,
+  j P PJ, unzip.unzip-prog PJ PU, linB.to-linA PU A,
   prog->string A S, print S,
   check {calc (Name ^ ": U(J) type-checks")} (of-prog A),
   run PJ Xs LXs O L C,
-  drop-last A AN, run AN Xs [] ONT _ C1,
+  linA.drop-last A AN, run AN Xs [] ONT _ C1,
   std.rev ONT [Tape|RO], std.rev RO O',
   run A [Tape] LXs _ L' C2,
   print Name "^J: cost" C "  .nonlin: cost" C1 "  .lin: cost" C2,
@@ -186,7 +182,7 @@ unzip-check Name P Xs LXs :-
 func unzip-tests.
 unzip-tests :-
   print "--- unzipping U (unzip.unzip-prog) ---",
-  example.sin1 F, forward.dj-prog (def F x\ pnil) FJ, unzip.unzip-prog FJ FU,
+  example.sin1 F, j (def F x\ pnil) FJ, unzip.unzip-prog FJ FU,
   exampleB.dsin-unzipped FB,
   check "U(J(sin1)) is the unzipped dsin of Figure 9" (FU = FB),
   example.sq Sq, unzip-check "sq" (def Sq x\ pnil) [real 3.0] [real 1.0],
@@ -212,11 +208,11 @@ dot1 (vtup Xs) (vtup Ys) C :- dot Xs Ys C.
 func transpose-check string, linA.prog, list linA.val, list linA.val,
   list linA.val.
 transpose-check Name P Xs DXs DYs :-
-  forward.dj-prog P PJ, unzip.unzip-prog PJ PU, transpose.transpose-prog PU PT,
+  j P PJ, unzip.unzip-prog PJ PU, transpose.transpose-prog PU PT,
   ppB.tprog->string PT S, print S,
   linB.to-linA PT AT,
   check {calc (Name ^ ": T(U(J)) type-checks")} (of-prog AT),
-  linB.to-linA PU AU, drop-last AU AN,
+  linB.to-linA PU AU, linA.drop-last AU AN,
   run AN Xs [] ONT _ _, std.rev ONT [Tape|_],
   run AU [Tape] DXs _ Ys CL,
   run AT [Tape] DYs _ Xbar CT,
@@ -243,5 +239,78 @@ transpose-tests :-
     [vtup [real 1.0, real 0.5]] [real 0.3, vtup [real 0.7, real -1.1]],
   example.k-prog K,
   transpose-check "k" K [real 3.0] [real 1.0] [real 2.0].
+
+% J followed by the two cleanup steps: what U, T and L start from.
+func j linA.prog -> linA.prog.
+j P PN :-
+  forward.dj-prog P PJ, flatten.flatten-prog PJ P1, copyprop.copyprop-prog P1 PN.
+
+% No let has a let, an unpacking let, or a copy as its bound expression.
+func normal linA.expr.
+normal (linA.let E B) :- !, not (nested-or-copy E), normal E, normal-nb B.
+normal (linA.unpack _ B) :- !, normal-nb B.
+normal (linA.lunpack _ B) :- !, normal-lb B.
+normal (linA.drop E) :- !, normal E.
+normal _.
+
+func nested-or-copy linA.expr.
+nested-or-copy (linA.let _ _).
+nested-or-copy (linA.unpack _ _).
+nested-or-copy (linA.lunpack _ _).
+nested-or-copy (linA.ret _ _).
+nested-or-copy (linA.nvar _).
+nested-or-copy (linA.lvar _).
+
+func normal-nb linA.nbind linA.expr.
+normal-nb (linA.nb _ B) :- pi x\ normal-nb (B x).
+normal-nb (linA.nend L) :- normal-lb L.
+
+func normal-lb linA.lbind linA.expr.
+normal-lb (linA.lb _ B) :- pi d\ normal-lb (B d).
+normal-lb (linA.lend E) :- normal E.
+
+func normal-prog linA.prog.
+normal-prog pnil.
+normal-prog (def D P) :- normal-def D, pi f\ normal-prog (P f).
+
+func normal-def linA.nbind linA.fbody.
+normal-def (linA.nb _ B) :- pi x\ normal-def (B x).
+normal-def (linA.nend L) :- normal-ldef L.
+
+func normal-ldef linA.lbind linA.fbody.
+normal-ldef (linA.lb _ B) :- pi d\ normal-ldef (B d).
+normal-ldef (linA.lend (linA.body _ _ E)) :- normal E.
+
+% flatten and copyprop on J(P): the result type-checks, has no nested let
+% and no copy left, and computes the same results as J(P) at the same cost.
+func normalize-check string, linA.prog, list linA.val, list linA.val.
+normalize-check Name P Xs LXs :-
+  forward.dj-prog P PJ, j P PN,
+  prog->string PN S, print S,
+  check {calc (Name ^ ": flatten and copyprop type-check")} (of-prog PN),
+  check {calc (Name ^ ": no nested let or copy is left")} (normal-prog PN),
+  run PJ Xs LXs O L C, run PN Xs LXs O' L' C',
+  check {calc (Name ^ ": same results, same cost")}
+    (approx-list O' O, approx-list L' L, C = C').
+
+func normalize-tests.
+normalize-tests :-
+  print "--- flatten and copyprop, after J ---",
+  example.neg-sin F, normalize-check "neg-sin" (def F x\ pnil) [real 0.5] [real 1.0],
+  check "neg-sin: the result is Figure 6, right"
+    (j (def F x\ pnil) PF, example.neg-sin-J G, PF = def G x\ pnil),
+  example.sq Sq, normalize-check "sq" (def Sq x\ pnil) [real 3.0] [real 1.0],
+  example.h H, normalize-check "h" (def H x\ pnil) [real 0.5] [real 1.0],
+  example.m M,
+  normalize-check "m" (def M x\ pnil)
+    [vtup [real 2.0, real 3.0]] [vtup [real 1.0, real 0.0]],
+  example.k-prog K, normalize-check "k" K [real 3.0] [real 1.0].
+
+% All the test groups.
+func all.
+all :-
+  linA-tests, print "", forward-tests, print "", normalize-tests, print "",
+  erase-tests, print "", linB-tests, print "", unzip-tests, print "",
+  transpose-tests.
 
 } % namespace test

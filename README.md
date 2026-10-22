@@ -14,8 +14,9 @@ Files:
   Inria research report RR-7957, 2012
   ([hal-00695839](https://inria.hal.science/hal-00695839)).
 - The Elpi code, one file per language, transformation and utility (see
-  [The Elpi code](#the-elpi-code)), with [main.elpi](main.elpi) as the entry
-  point.
+  [The Elpi code](#the-elpi-code)), with two entry points:
+  [run-example.elpi](run-example.elpi) and [run-tests.elpi](run-tests.elpi),
+  run by the [Makefile](Makefile).
 
 ## You Only Linearize Once (Radul et al., 2023)
 
@@ -190,33 +191,37 @@ implicit, and several analyses rediscover it.
 You need [Elpi](https://github.com/LPCIC/elpi) 3.8 or later, which added the
 `data` / `symb` syntax. Install it with `opam install elpi`.
 
-**Run.** `main` prints the paper's running example through every step,
-then runs the tests:
+**Run.** There are two entry points, each with a `make` target:
 
 ```
-elpi -test main.elpi
+make         # the running example: elpi -test run-example.elpi
+make test    # all the tests:       elpi -test run-tests.elpi
 ```
+
+Set `ELPI=…` to use another `elpi` binary (`make test ELPI=~/bin/elpi`).
 
 The running example is `f(u) = −sin(u)` at `u = 0.5` (Figures 6, 9 and 10).
-`main` prints each step in the paper's notation, checks that it type-checks,
+`make` prints each step in the paper's notation, checks that it type-checks,
 and runs it with its cost:
 1. `f`, in Linear A;
-2. `J(f)`, its forward derivative;
-3. `U(J(f))`, unzipped into `f.nonlin` and `f.lin` in Linear B;
-4. `T(U(J(f)))`: `f.lin` transposed into `f.linᵀ`, which computes the
+2. `J(f)`, its forward derivative, as the rules produce it (with nested
+   lets);
+3. `C(J(f))`, cleaned up in two parts, `flatten` then `copyprop`; the result
+   is Figure 6;
+4. `U(C(J(f)))`, unzipped into `f.nonlin` and `f.lin` in Linear B;
+5. `T(U(C(J(f))))`: `f.lin` transposed into `f.linᵀ`, which computes the
    gradient `f′(0.5) = −cos(0.5)` (reverse mode);
-5. `L(J(f))`, the erased derivative, which computes `f` and `f′` with no
+6. `L(C(J(f)))`, the erased derivative, which computes `f` and `f′` with no
    linear code.
 
-The tests come next, in six groups: Linear A (type checker, interpreter,
-printer), J, L, Linear B, U and T. Each prints the programs it builds, then
-`ok: …` lines, and finally `Success:`. A failing check prints `FAILED: …`.
-The exit code is 0 when all tests pass and 1 when one fails, so the command
-also works in a script or in CI. The end of the running example looks like
-this:
+`make test` runs the tests, in seven groups: Linear A (type checker,
+interpreter, printer), J, C, L, Linear B, U and T. Each prints the programs it
+builds, then `ok: …` lines, and finally `Success:`. A failing check prints
+`FAILED: …` and makes `make test` fail, so it also works in a script or in
+CI. The end of the running example looks like this:
 
 ```
-== T(U(J(f))): f^J.lin transposed (Figure 10); reverse mode = U then T ==
+== T(U(C(J(f)))): f^J.lin transposed (Figure 10); reverse mode ==
 
 def f.nonlin(a : R ;) → (R, ⊗(R, R) ;) =
   ...
@@ -236,6 +241,8 @@ qualified names. Each file accumulates the files it uses:
 | [linA.elpi](linA.elpi) | `linA` | Linear A syntax (Figure 3), and its free-variable helpers |
 | [linB.elpi](linB.elpi) | `linB` | Linear B syntax (Section 6), and its inclusion in Linear A |
 | [forward.elpi](forward.elpi) | `forward` | transformation J, forward derivative (Section 5) |
+| [flatten.elpi](flatten.elpi) | `flatten` | cleanup C, part 1: let-floating |
+| [copyprop.elpi](copyprop.elpi) | `copyprop` | cleanup C, part 2: copy propagation |
 | [erase.elpi](erase.elpi) | `erase` | transformation L, linearity erasure (Section 4.5) |
 | [unzip.elpi](unzip.elpi) | `unzip` | transformation U, unzipping, Linear A to Linear B (Section 6) |
 | [transpose.elpi](transpose.elpi) | `transpose` | transformation T, transposition of Linear B (Section 7) |
@@ -244,18 +251,21 @@ qualified names. Each file accumulates the files it uses:
 | [ppA.elpi](ppA.elpi) | `pp` | printer of Linear A |
 | [ppB.elpi](ppB.elpi) | `ppB` | printer of Linear B |
 | [examples.elpi](examples.elpi) | `example`, `exampleB` | ready-made Linear A and Linear B terms |
-| [test.elpi](test.elpi) | `test` | the checks run by `main` |
-| [main.elpi](main.elpi) | `running` | the running example, and `main` |
+| [test.elpi](test.elpi) | `test` | the checks; `test.all` runs them all |
+| [running.elpi](running.elpi) | `running` | the running example; `running.show` prints it |
+| [run-example.elpi](run-example.elpi) | — | entry point for `make`: `main` runs `running.show` |
+| [run-tests.elpi](run-tests.elpi) | — | entry point for `make test`: `main` runs `test.all`; loads every file |
 
 Linear B is checked, run and printed as Linear A, through the inclusion
 `linB.to-linA`; `ppB` prints it directly.
 
-**Run your own query.** Start `elpi main.elpi`, then type a query at the
+**Run your own query.** Start `elpi run-tests.elpi`, which loads every
+file, then type a query at the
 `goal>` prompt, ending with a full stop. You can also pipe the query in:
 
 ```
 echo "example.g G, lincheckA.of-def G Ts LTs Ss LSs, evalA.run-def G [linA.real 2.0] [linA.real 0.5] Vs LVs Cost." \
-  | elpi main.elpi
+  | elpi run-tests.elpi
 ```
 
 That query prints the term `G` and its types (`Ts LTs -> Ss LSs`, here
@@ -279,6 +289,7 @@ The predicates you will use most:
 | `ppB.tprog->string B S` | the same, for a transposed program (`f.linᵀ`) |
 | `forward.dj-def D D'` / `forward.dj-prog P P'` | J of a non-linear definition / program |
 | `forward.dj E E'` | J on an expression; each free `x` needs a clause `forward.dot x ẋ T` in the context |
+| `flatten.flatten-prog P P'` / `copyprop.copyprop-prog P P'` | the two parts of C, on a Linear A program |
 | `erase.lerase-prog P P'` | L of a program (adds the helper functions) |
 | `linB.to-linA B A` | a Linear B program as the Linear A program it is |
 | `unzip.unzip-prog P B` | U of a Linear A program into a Linear B one |
@@ -289,7 +300,7 @@ The predicates you will use most:
 To see an example in the paper's notation:
 
 ```
-echo 'example.dsin D, ppA.def->string D S, print S.' | elpi main.elpi
+echo 'example.dsin D, ppA.def->string D S, print S.' | elpi run-tests.elpi
 ```
 
 prints
@@ -307,7 +318,7 @@ To differentiate a definition, print it, and run it at `x = 3` in direction
 
 ```
 echo 'example.sq D, forward.dj-def D DJ, ppA.def->string DJ S, print S, evalA.run-def DJ [linA.real 3.0] [linA.real 1.0] Vs LVs C.' \
-  | elpi main.elpi
+  | elpi run-tests.elpi
 ```
 
 To get `F(x)` and `F'(x)` with no linear code, as in Section 5, erase the
@@ -315,14 +326,14 @@ derivative and pass the direction as an ordinary argument:
 
 ```
 echo 'example.k-prog P, forward.dj-prog P PJ, erase.lerase-prog PJ PE, ppA.prog->string PE S, print S, evalA.run PE [linA.real 3.0, linA.real 1.0] [] Vs _ C.' \
-  | elpi main.elpi
+  | elpi run-tests.elpi
 ```
 
-To print reverse mode, `T(U(J(P)))`, for the program `k`:
+To print reverse mode, `T(U(C(J(P))))`, for the program `k`:
 
 ```
-echo 'example.k-prog P, forward.dj-prog P PJ, unzip.unzip-prog PJ PU, transpose.transpose-prog PU PT, ppB.tprog->string PT S, print S.' \
-  | elpi main.elpi
+echo 'example.k-prog P, forward.dj-prog P PJ, flatten.flatten-prog PJ P1, copyprop.copyprop-prog P1 PC, unzip.unzip-prog PC PU, transpose.transpose-prog PU PT, ppB.tprog->string PT S, print S.' \
+  | elpi run-tests.elpi
 ```
 
 Values are written `linA.real 3.0` and `linA.vtup [linA.real 1.0, linA.real 2.0]`.
@@ -441,6 +452,24 @@ functions; they write `linA.sin` and so on.
   - **Literals (JLit):** `l` becomes `(l ; 0̇_R)`.
   - **Input check:** `dj` has no rules for linear syntax, so it fails on
     input that is not purely non-linear.
+- **Cleanup C, namespaces `flatten` and `copyprop`.** The paper writes J's
+  results flat (Figure 6), but its rules nest them: JLet makes `J(e1)` the
+  bound expression of a `let`, and `J(e1)` is usually a block of lets
+  itself. Unzipping then turns each block's result into a trivial rebinding
+  such as `let (m ;) = (c ;) in`. C removes both, in two parts, and runs
+  right after J:
+  - `flatten` floats lets out: `let x̄ = (let ȳ = a in b) in c` becomes
+    `let ȳ = a in let x̄ = b in c`, and likewise when the bound expression is
+    an unpacking let. In HOAS the variables `ȳ` cannot occur in `c`, so
+    nothing needs renaming.
+  - `copyprop` propagates copies: `let (x̄ ; ẏ) = (v̄ ; ẇ) in c` becomes `c`
+    with `x̄ := v̄` and `ẏ := ẇ`, and likewise for a single variable. In HOAS
+    the substitution is applying the binders to `v̄` and `ẇ`.
+  - `let` and returns cost nothing, so C changes neither results nor cost.
+    `C(J(f))` for the running example is exactly Figure 6 (with `−v̇`
+    written as `-1.0 * v̇`).
+  - C works on Linear A. T produces Linear B, and its output can still
+    contain nested lets, which C doesn't touch.
 - **Linearity erasure L (Section 4.5), namespace `erase`: `lerase`.** The paper gives L only in
   prose. `lerase-prog` follows it:
   - **Helper functions:** for every type at which linear `+`, `*` or `0̇` is
@@ -504,7 +533,7 @@ functions; they write `linA.sin` and so on.
   `transpose-prog` keeps the non-linear functions and replaces each linear
   function `f.lin` by its transpose `f.linᵀ`, which reads cotangents of
   `f.lin`'s results and returns cotangents of its linear parameters. Calls
-  to `f.lin` become calls to `f.linᵀ`. Reverse mode is `T ∘ U ∘ J`: run
+  to `f.lin` become calls to `f.linᵀ`. Reverse mode is `T ∘ U ∘ C ∘ J`: run
   `f.nonlin(x ;)` for the results and the tape, then `f.linᵀ(tape ; ÿ)`.
   - `transpose E Dd Cs E'` is `T(Δ̇, Δ̈ | ė) ⇝ ë`. `Dd` lists the linear
     variables `ė` consumes, with types, in the order in which `ë` returns
@@ -527,9 +556,9 @@ functions; they write `linA.sin` and so on.
   the paper's notation, using the helpers of `ppA`. A non-linear function
   followed by a linear one prints as `f.nonlin` and `f.lin`, as in
   Figure 9, and `tprog->string` prints transposed ones as `f.linᵀ`.
-- **The running example, in `main.elpi`.** `f(u) = −sin(u)` goes through J,
+- **The running example, in `running.elpi`.** `f(u) = −sin(u)` goes through J,
   U, T and L, printed and run at `u = 0.5` (see "How to run").
-- **Tests (`main`, namespace `test`):**
+- **Tests (`make test`, namespace `test`):**
   - The paper's `g(x ; ẏ) = (x² ; x²ẏ)` type-checks. Run as `g(3 ; 1)` it
     returns `(9 ; 9)` with cost 2.
   - A `drop`/`dup` example type-checks.
@@ -550,7 +579,7 @@ functions; they write `linA.sin` and so on.
     - J's cost is a constant factor over the primal (for example 1 → 4 for
       `sq`).
   - L (`erase-tests`):
-    - `L(J(k))(3, 1 ;)` gives `(12, 7 ;)`.
+    - `L(C(J(k)))(3, 1 ;)` gives `(12, 7 ;)`.
     - Linear `+`, `*` and `0̇` on tuples go through the generated helpers.
     - `dup` disappears and `lunpack` becomes `unpack`.
     - Every output type-checks.
@@ -563,22 +592,25 @@ functions; they write `linA.sin` and so on.
     - A linear leaf in a non-linear expression is rejected, and so is a
       non-linear leaf in a linear one.
   - U (`unzip-tests`):
-    - `U(J(sin))` is exactly the hand-written unzipped `dsin` of Figure 9.
-    - For `sq`, `h`, `m` and the two-function program `k`, `U(J(P))`
+    - `U(C(J(sin)))` is exactly the hand-written unzipped `dsin` of Figure 9.
+    - For `sq`, `h`, `m` and the two-function program `k`, `U(C(J(P)))`
       type-checks.
     - For each of them, running `f.nonlin(x ;)` and then
       `f.lin(tape ; ẋ)` gives the results of `J(P)(x ; ẋ)`, and the two
       costs add up exactly to J's cost (Theorem 6.2: unzipping preserves
       work).
+  - C (`normalize-tests`): for the running example, `sq`, `h`, `m` and `k`:
+    - `C(J(P))` type-checks, and has no nested let and no copy left;
+    - it computes the same results as `J(P)`, at the same cost;
+    - for the running example, it is exactly Figure 6 (`example.neg-sin-J`).
   - T (`transpose-tests`): for the running example, `sq`, `h`, `m` and
     `k`, with `ė = f.lin` and `ë = f.linᵀ` at the tape of `f.nonlin(x ;)`:
-    - `T(U(J(P)))` type-checks;
+    - `T(U(C(J(P))))` type-checks;
     - `⟨ẋ, ë[x; ÿ]⟩ = ⟨ė[x; ẋ], ÿ⟩`: `ë` is the transpose of `ė`
       (Theorem 7.1, claim 3);
     - `W[ë] + L_in ≤ W[ė] + L_out`, where `L` counts the scalars in `ẋ` and
       `ÿ` (Theorem 7.1, claim 2).
 
 Not done: checkpointing (the free choice in ULet to recompute a non-linear
-value in the linear part instead of putting it on the tape), and a pass that
-removes the trivial rebindings (`let (m ;) = (c ;) in`) that the rules
-produce.
+value in the linear part instead of putting it on the tape), and a cleanup
+for Linear B, to flatten the nested lets that T produces.

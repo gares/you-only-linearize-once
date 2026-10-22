@@ -1,0 +1,46 @@
+% Step copyprop: copy propagation (after J and flatten)
+%
+% Linear A to Linear A. A let whose bound expression is just variables
+% renames them:
+%   let (x̄ ; ẏ) = (v̄ ; ẇ) in c   ⇝   c[x̄ := v̄, ẏ := ẇ]
+% and likewise let (x ;) = v in c and let (; ẏ) = ẇ in c. In HOAS the
+% substitution is applying the binders to v̄ and ẇ. Each ẏ is used exactly
+% once in c and each x at least once, so the result is still well typed;
+% lets and returns cost nothing, so it computes the same values at the
+% same cost.
+
+accumulate linA.
+
+namespace copyprop {
+
+shorten linA.{
+  nl, lin, nbind, lbind, nb, nend, lb, lend, expr, ret, let, unpack, lunpack,
+  nvar, lvar, drop, prog, map-nb, map-lb, map-prog }.
+
+func copyprop expr -> expr.
+copyprop (let E B) R :- !, copyprop E E', let-copy E' B R.
+copyprop (unpack V B) (unpack V B') :- !, map-nb copyprop B B'.
+copyprop (lunpack D B) (lunpack D B') :- !, map-lb copyprop B B'.
+copyprop (drop E) (drop E') :- !, copyprop E E'.
+copyprop E E.
+
+% let E in B: if E is a copy, substitute; otherwise keep the let.
+func let-copy expr, nbind expr -> expr.
+let-copy (ret Vs Ls) B R :- !, inst-nb B Vs Ls E, copyprop E R.
+let-copy (nvar V) B R :- !, inst-nb B [V] [] E, copyprop E R.
+let-copy (lvar D) B R :- !, inst-nb B [] [D] E, copyprop E R.
+let-copy E B (let E B') :- map-nb copyprop B B'.
+
+% Instantiate the binders of a spine with the given variables.
+func inst-nb nbind expr, list nl, list lin -> expr.
+inst-nb (nb _ B) [V|Vs] Ls E :- inst-nb (B V) Vs Ls E.
+inst-nb (nend L) [] Ls E :- inst-lb L Ls E.
+
+func inst-lb lbind expr, list lin -> expr.
+inst-lb (lb _ B) [D|Ds] E :- inst-lb (B D) Ds E.
+inst-lb (lend E) [] E.
+
+func copyprop-prog prog -> prog.
+copyprop-prog P P' :- map-prog copyprop P P'.
+
+} % namespace copyprop

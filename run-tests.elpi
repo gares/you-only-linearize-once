@@ -1,0 +1,9 @@
+% Entry point: all the tests.
+%
+% Run with: make test   (or: elpi -test run-tests.elpi)
+% Also the file to load for your own queries: it loads every other file.
+
+accumulate test.
+accumulate running.
+
+main :- test.all.

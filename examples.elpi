@@ -84,6 +84,21 @@ neg-sin (nb r u\ nend (lend (body [r] []
   (let (neg v) (nb r w\ nend (lend
   (ret [w] [])))))))))).
 
+% Figure 6, right: J(neg-sin) after flatten and copyprop. Linear A has no
+% linear negation, so −v̇ is -1.0 * v̇.
+%   def f^J(u:R ; u̇:R) -> (R ; R) =
+%     let (v ;) = sin(u) in let (du ;) = cos(u) in let (; v̇) = du * u̇ in
+%     let (w ;) = −v in let (m ;) = -1.0 in let (; ẇ) = m * v̇ in (w ; ẇ)
+func neg-sin-J -> nbind fbody.
+neg-sin-J (nb r u\ nend (lb r du\ lend (body [r] [r]
+  (let (sin u) (nb r v\ nend (lend
+  (let (cos u) (nb r c\ nend (lend
+  (let (lmul c du) (nend (lb r dv\ lend
+  (let (neg v) (nb r w\ nend (lend
+  (let (lit -1.0) (nb r m\ nend (lend
+  (let (lmul m dv) (nend (lb r dw\ lend
+  (ret [w] [dw])))))))))))))))))))))).
+
 % sin1(u) = sin(u): its derivative unzips to Figure 9 (exampleB.dsin-unzipped)
 func sin1 -> nbind fbody.
 sin1 (nb r x\ nend (lend (body [r] [] (sin x)))).

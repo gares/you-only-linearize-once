@@ -123,4 +123,33 @@ fv E L :- occ E L0, uniq L0 L.
 func fv-nb nbind expr -> list nl.
 fv-nb B L :- occ-nb B L0, uniq L0 L.
 
+% --- Maps under binders ----------------------------------------------------------
+
+% Apply K to the body of a binder spine, keeping the binders.
+func map-nb (func A -> A), nbind A -> nbind A.
+map-nb K (nb T B) (nb T B') :- pi x\ map-nb K (B x) (B' x).
+map-nb K (nend L) (nend L') :- map-lb K L L'.
+
+func map-lb (func A -> A), lbind A -> lbind A.
+map-lb K (lb T B) (lb T B') :- pi d\ map-lb K (B d) (B' d).
+map-lb K (lend X) (lend X') :- K X X'.
+
+% Apply K to the body expression of a definition.
+func map-body (func expr -> expr), fbody -> fbody.
+map-body K (body Ss LSs E) (body Ss LSs E') :- K E E'.
+
+% Apply K to the body expression of every definition of a program.
+func map-prog (func expr -> expr), prog -> prog.
+map-prog _ pnil pnil.
+map-prog K (def D P) (def D' P') :-
+  map-nb (map-body K) D D', pi f\ map-prog K (P f) (P' f).
+
+% --- Programs ------------------------------------------------------------------
+
+% Drop the last definition of a program. Used to run the f.nonlin of an
+% unzipped program: dropping its f.lin makes f.nonlin the entry point.
+func drop-last prog -> prog.
+drop-last (def _ (x\ pnil)) pnil :- !.
+drop-last (def D P) (def D P') :- pi f\ drop-last (P f) (P' f).
+
 } % namespace linA
