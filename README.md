@@ -1,5 +1,3 @@
-# L1
-
 Notes and an Elpi formalization of Linear A, the intermediate language of
 *You Only Linearize Once*. The repository also compares that paper with how
 Tapenade handles linearity.
