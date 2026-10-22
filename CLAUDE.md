@@ -51,6 +51,33 @@ writes `linA.ret` / `linB.ret`.
   grow at each step, then call `K` once at the end, reversing the
   accumulators if order matters. Keep a clean entry point that calls the
   recursive version: `p Xs K E :- p-acc Xs [] K E.`
+- **Predicate docs:** document a predicate the way Elpi's builtins are
+  documented: one comment right above its `func` declaration, starting with
+  the predicate applied to named arguments in square brackets, then what it
+  does in terms of those names, in the present tense:
+
+  ```
+  % [cot-of KVs P V] V is the cotangent of the variable of P, given the
+  % pairs variable ↦ cotangent in KVs.
+  func cot-of list (pair lin lin), pair lin ty -> lin.
+  ```
+
+  Use the variable names of the clauses. Keep it to what a caller needs
+  (inputs, outputs, what holds between them), in one or two sentences when
+  possible. A predicate whose name and type say everything gets no comment.
+  The same style applies to hypothetical predicates such as `forward.dot`.
+- **Rule labels:** a clause that implements a rule of the paper names it in
+  a comment on its head line, after `:- !,` (or `:-`), with the body on the
+  next lines:
+
+  ```
+  unzip (linA.let E1 B) R :- !, % ULet
+    unzip E1 R1, plug R1 (let-k B) R.
+  ```
+
+  A fact, or a clause whose body is just `!`, puts the label after the final
+  dot: `of (lit _) [r] []. % TypeLit`. Any explanation goes in a comment
+  line above the clause.
 - **No eta-expansions:** write a partial application, not a lambda that only
   forwards its arguments. Write `(dj-let Us E1 B)`, not
   `(Ws\ Zs\ R\ dj-let Us E1 B Ws Zs R)`. If the arguments come in the wrong

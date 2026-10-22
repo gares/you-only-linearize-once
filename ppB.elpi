@@ -18,11 +18,16 @@ shorten ppA.{
   var-name, fn-name, dotted, pp-ty, pp-tensor, pp-split, pp-decl, indent,
   pp-let, pp-drop, pp-atom, pp-sep, nlname, linname }.
 
+% [nfname F S] S is the name of the non-linear function F, loaded in the context
+% when F is bound.
 func nfname nfn -> string.
+% [lfname F S] S is the name of the linear function F, loaded in the context
+% when F is bound.
 func lfname lfn -> string.
 
-% Name the binders of a spine (from depth N), then print the body with K.
-% Returns the names and types of the binders, and the body's lines.
+% [pp-nabs K N B Xs Ts Body] names the non-linear binders of the spine B from
+% depth N, then prints the body of B with K, at the depth past the binders, into
+% the lines Body. Xs and Ts are the names and types of the binders.
 func pp-nabs (func A, int -> list string), int, nabs A
   -> list string, list string, list string.
 pp-nabs K N (nb T B) [X|Xs] [TS|Ts] Body :-
@@ -30,6 +35,7 @@ pp-nabs K N (nb T B) [X|Xs] [TS|Ts] Body :-
   pi x\ nlname x X ==> pp-nabs K N1 (B x) Xs Ts Body.
 pp-nabs K N (nend A) [] [] Body :- K A N Body.
 
+% [pp-labs K N B Xs Ts Body] is pp-nabs for a spine B of linear binders.
 func pp-labs (func A, int -> list string), int, labs A
   -> list string, list string, list string.
 pp-labs K N (lb T B) [X|Xs] [TS|Ts] Body :-
@@ -37,11 +43,13 @@ pp-labs K N (lb T B) [X|Xs] [TS|Ts] Body :-
   pi x\ linname x X ==> pp-labs K N1 (B x) Xs Ts Body.
 pp-labs K N (lend A) [] [] Body :- K A N Body.
 
-% The bound expression of a let is numbered past the let's own binders.
+% [past N Xs N1] N1 is N plus the length of Xs: the bound expression of a let is
+% numbered past the let's own binders Xs.
 func past int, list string -> int.
 past N Xs N1 :- std.length Xs K, N1 is N + K.
 
-% Non-linear expressions.
+% [pp-n E N Lines] Lines print the non-linear expression E, naming its binders
+% from depth N.
 func pp-n nexpr, int -> list string.
 pp-n (ret Vs) _ [S] :- !, std.map Vs nlname Xs, pp-split Xs [] S.
 pp-n (let E B) N Lines :- !,
@@ -55,7 +63,8 @@ pp-n (app F Vs) _ [S] :- !,
 pp-n (drop E) N Lines :- !, pp-n E N L, pp-drop L Lines.
 pp-n (leaf E) _ [S] :- pp-atom E S.
 
-% Linear expressions.
+% [pp-l E N Lines] Lines print the linear expression E, naming its binders from
+% depth N.
 func pp-l lexpr, int -> list string.
 pp-l (lret Ds) _ [S] :- !, std.map Ds linname Xs, pp-split [] Xs S.
 pp-l (llet E B) N Lines :- !,
@@ -76,43 +85,53 @@ pp-l (lapp F Vs Ds) _ [S] :- !,
 pp-l (ldrop E) N Lines :- !, pp-l E N L, pp-drop L Lines.
 pp-l (lleaf E) _ [S] :- pp-atom E S.
 
-% def f.nonlin(v:τ ;) → (σ ;) =
-% The continuations put the return types first, so the header can use them.
+% [pp-nbody B N Lines] Lines are the return types of B, as (σ ;), then the lines
+% of its expression, named from depth N. The return types come first so that
+% pp-ndef can put them in the header.
 func pp-nbody nfbody, int -> list string.
 pp-nbody (nbody Ss E) N [R|Lines] :-
   std.map Ss pp-ty STs, pp-split STs [] R, pp-n E N Lines.
 
+% [pp-ndef Fn D Lines] Lines print D as the non-linear definition of Fn: a
+% header def Fn(v:τ ;) → (σ ;) =, then the body, indented.
 func pp-ndef string, nabs nfbody -> list string.
 pp-ndef Fn D [Hd|Body] :-
   pp-nabs pp-nbody 0 D Xs Ts [R|Lines],
   std.map2 Xs Ts pp-decl Ds, pp-split Ds [] Args,
   Hd is "def " ^ Fn ^ Args ^ " → " ^ R ^ " =", indent Lines Body.
 
-% def f.lin(v:τ ; v̇:τ̇) → (; σ̇) =
-% pp-lpart returns the linear parameters (joined), the return types, and
-% the body.
+% [pp-lbody B N Lines] Lines are the return types of B, as (; σ̇), then the
+% lines of its expression, named from depth N.
 func pp-lbody lfbody, int -> list string.
 pp-lbody (lbody Ss E) N [R|Lines] :-
   std.map Ss pp-ty STs, pp-split [] STs R, pp-l E N Lines.
 
+% [pp-lpart LA N Lines] Lines are the linear parameters of LA (their
+% declarations joined by commas), the return types, then the lines of the body,
+% naming the binders from depth N. The parameters and return types come first so
+% that pp-ldef can put them in the header.
 func pp-lpart labs lfbody, int -> list string.
 pp-lpart LA N [LDS, R|Lines] :-
   pp-labs pp-lbody N LA Xs Ts [R|Lines],
   std.map2 Xs Ts pp-decl LDs, std.string.concat ", " LDs LDS.
 
+% [pp-ldef Fn D Lines] Lines print D as the linear definition of Fn: a header
+% def Fn(v:τ ; v̇:τ̇) → (; σ̇) =, then the body, indented.
 func pp-ldef string, nabs (labs lfbody) -> list string.
 pp-ldef Fn D [Hd|Body] :-
   pp-nabs pp-lpart 0 D Xs Ts [LDS, R|Lines],
   std.map2 Xs Ts pp-decl Ds, lin-args LDS LArgs, pp-split Ds LArgs Args,
   Hd is "def " ^ Fn ^ Args ^ " → " ^ R ^ " =", indent Lines Body.
 
+% [lin-args S Ls] Ls is [S], or [] when S is empty.
 func lin-args string -> list string.
 lin-args "" [] :- !.
 lin-args S [S].
 
-% Definitions in order, separated by a blank line. Lin is the suffix of
-% linear functions (".lin", or ".linᵀ" for a transposed program). Base is
-% the name of the previous definition when it was non-linear, "" otherwise.
+% [pp-prog Lin K Base P Lines] Lines print the definitions of P in order,
+% separated by a blank line, the next one named after fn-name K. Lin is the
+% suffix of linear functions (".lin", or ".linᵀ" for a transposed program). Base
+% is the name of the previous definition when it was non-linear, "" otherwise.
 func pp-prog string, int, string, prog -> list string.
 pp-prog _ _ _ pnil [].
 pp-prog Lin K _ (ndef D P) Lines :-
@@ -124,15 +143,21 @@ pp-prog Lin K Base (ldef D P) Lines :-
   (pi f\ lfname f Fn ==> pp-prog Lin K1 "" (P f) L2),
   pp-sep L1 L2 Lines.
 
-% A linear function shares the name of the non-linear one just before it.
+% [lin-base K Base B K1] B is the name of a linear function: Base, the name of
+% the non-linear function just before it, or fn-name K when Base is "". K1 is
+% the index of the next fresh name.
 func lin-base int, string -> string, int.
 lin-base K "" B K1 :- !, fn-name K B, K1 is K + 1.
 lin-base K B B K.
 
+% [prog->string P S] S prints the program P, its lines joined by newlines;
+% linear functions are named f.lin.
 func prog->string prog -> string.
 prog->string P S :- pp-prog ".lin" 0 "" P L, std.string.concat "\n" L S.
 
-% For the output of transpose.transpose-prog: linear functions are f.linᵀ.
+% [tprog->string P S] S prints the program P, an output of
+% transpose.transpose-prog, its lines joined by newlines; linear functions are
+% named f.linᵀ.
 func tprog->string prog -> string.
 tprog->string P S :- pp-prog ".linᵀ" 0 "" P L, std.string.concat "\n" L S.
 

@@ -27,12 +27,15 @@ symb hole    nexpr -> lexpr -> ctx.        % □, filled with e' and ė'
 symb clet    nexpr -> nabs ctx -> ctx.     % let (v:τ ;) = e in E
 symb cunpack nl -> nabs ctx -> ctx.        % let (⊗w:⊗τ ;) = v in E
 
-% plug E K: replace the hole (e', ė') of E by K e' ė'.
+% [plug E K C] C is the context E with its hole (e', ė') replaced by the
+% context K e' ė'.
 func plug ctx, (func nexpr, lexpr -> ctx) -> ctx.
 plug (hole N L) K C :- K N L C.
 plug (clet E B) K (clet E B') :- plug-nabs B K B'.
 plug (cunpack V B) K (cunpack V B') :- plug-nabs B K B'.
 
+% [plug-nabs B K B'] B' is B, under the same binders, with K plugged into
+% the hole of its body (see plug).
 func plug-nabs nabs ctx, (func nexpr, lexpr -> ctx) -> nabs ctx.
 plug-nabs (linB.nb T B) K (linB.nb T B') :- pi x\ plug-nabs (B x) K (B' x).
 plug-nabs (linB.nend C) K (linB.nend C') :- plug C K C'.
@@ -45,12 +48,18 @@ plug-nabs (linB.nend C) K (linB.nend C') :- plug C K C'.
 % renaming: cp-nl x y / cp-lin ẋ ẏ, loaded with =!=>, map a variable to its
 % new name, and every other variable is kept.
 
+% [cp-nl X Y] Y is the new name of the non-linear variable X. Renamings are
+% loaded in the context with =!=>; any other variable is kept (Y = X).
 func cp-nl nl -> nl.
 cp-nl X X.
 
+% [cp-lin X Y] Y is the new name of the linear variable X. Renamings are
+% loaded in the context with =!=>; any other variable is kept (Y = X).
 func cp-lin lin -> lin.
 cp-lin X X.
 
+% [cp-leaf E E'] E' is a copy of the leaf E with its variables renamed by
+% cp-nl and cp-lin.
 func cp-leaf linA.expr -> linA.expr.
 cp-leaf (linA.nvar V) (linA.nvar V') :- cp-nl V V'.
 cp-leaf (linA.lit F) (linA.lit F).
@@ -68,6 +77,8 @@ cp-leaf (linA.lplus D1 D2) (linA.lplus D1' D2') :- cp-lin D1 D1', cp-lin D2 D2'.
 cp-leaf (linA.lmul V D) (linA.lmul V' D') :- cp-nl V V', cp-lin D D'.
 cp-leaf (linA.dup D) (linA.dup D') :- cp-lin D D'.
 
+% [cp-nexpr E E'] E' is a copy of the non-linear expression E with its free
+% variables renamed by cp-nl and cp-lin.
 func cp-nexpr nexpr -> nexpr.
 cp-nexpr (linB.ret Vs) (linB.ret Vs') :- std.map Vs cp-nl Vs'.
 cp-nexpr (linB.let E B) (linB.let E' B') :- cp-nexpr E E', cp-nabs cp-nexpr B B'.
@@ -76,6 +87,8 @@ cp-nexpr (linB.app F Vs) (linB.app F Vs') :- std.map Vs cp-nl Vs'.
 cp-nexpr (linB.drop E) (linB.drop E') :- cp-nexpr E E'.
 cp-nexpr (leaf E) (leaf E') :- cp-leaf E E'.
 
+% [cp-lexpr E E'] E' is a copy of the linear expression E with its free
+% variables renamed by cp-nl and cp-lin.
 func cp-lexpr lexpr -> lexpr.
 cp-lexpr (lret Ds) (lret Ds') :- std.map Ds cp-lin Ds'.
 cp-lexpr (llet E B) (llet E' B') :- cp-lexpr E E', cp-labs cp-lexpr B B'.
@@ -87,21 +100,28 @@ cp-lexpr (lapp F Vs Ds) (lapp F Vs' Ds') :-
 cp-lexpr (ldrop E) (ldrop E') :- cp-lexpr E E'.
 cp-lexpr (lleaf E) (lleaf E') :- cp-leaf E E'.
 
+% [cp-nabs K B B'] B' has the non-linear binders of B, around the copy K
+% makes of B's body.
 func cp-nabs (func A -> A), nabs A -> nabs A.
 cp-nabs K (linB.nb T B) (linB.nb T B') :- pi x\ cp-nabs K (B x) (B' x).
 cp-nabs K (linB.nend X) (linB.nend X') :- K X X'.
 
+% [cp-labs K B B'] B' has the linear binders of B, around the copy K makes
+% of B's body.
 func cp-labs (func A -> A), labs A -> labs A.
 cp-labs K (linB.lb T B) (linB.lb T B') :- pi d\ cp-labs K (B d) (B' d).
 cp-labs K (linB.lend X) (linB.lend X') :- K X X'.
 
-% rebind Ds L: bind the linear variables Ds (with their types) around L.
+% [rebind Ds L LB] LB binds fresh linear variables, with the types in Ds,
+% around a copy of L where each variable of Ds is renamed to its binder.
 func rebind list (pair lin ty), lexpr -> labs lexpr.
 rebind [] L (linB.lend L') :- cp-lexpr L L'.
 rebind [pr D T|Ds] L (linB.lb T B) :- pi d\ cp-lin D d =!=> rebind Ds L (B d).
 
 % --- Non-linear variables read by an expression --------------------------------
 
+% [nocc E L] L lists the free non-linear variables that E reads (possibly
+% with repetitions).
 func nocc nexpr -> list nl.
 nocc (linB.ret Vs) Vs.
 nocc (linB.let E B) L :- nocc E L1, nabs-occ nocc B L2, std.append L1 L2 L.
@@ -110,6 +130,8 @@ nocc (linB.app _ Vs) Vs.
 nocc (linB.drop E) L :- nocc E L.
 nocc (leaf E) L :- linA.occ E L.
 
+% [locc E L] L lists the free non-linear variables that the linear
+% expression E reads (possibly with repetitions).
 func locc lexpr -> list nl.
 locc (lret _) [].
 locc (llet E B) L :- locc E L1, labs-occ locc B L2, std.append L1 L2 L.
@@ -120,82 +142,115 @@ locc (lapp _ Vs _) Vs.
 locc (ldrop E) L :- locc E L.
 locc (lleaf E) L :- linA.occ E L.
 
+% [nabs-occ K B L] L lists the variables that K finds in the body of B,
+% except those bound by B.
 func nabs-occ (func A -> list nl), nabs A -> list nl.
 nabs-occ K (linB.nb _ B) L :- pi x\ nabs-occ-under K x (B x) L.
 nabs-occ K (linB.nend X) L :- K X L.
 
-% Called under pi x, so L0 may mention x before x is filtered out.
+% [nabs-occ-under K X B L] L is what nabs-occ K B gives, without X. It is
+% called under pi x, so that list may mention x before x is filtered out.
 func nabs-occ-under (func A -> list nl), nl, nabs A -> list nl.
 nabs-occ-under K X B L :- nabs-occ K B L0, std.filter L0 (y\ not (y = X)) L.
 
+% [labs-occ K B L] L lists the variables that K finds in the body of B
+% (linear binders bind no non-linear variable).
 func labs-occ (func A -> list nl), labs A -> list nl.
 labs-occ K (linB.lb _ B) L :- pi d\ labs-occ K (B d) L.
 labs-occ K (linB.lend X) L :- K X L.
 
 % --- U on expressions ------------------------------------------------------------
 
-func ufn fn -> nfn, lfn, list ty, ty.   % f ↦ f.nonlin, f.lin, σ, ⊗π
+% [ufn F FN FL Ss TT] maps the Linear A function F to its two halves FN
+% (f.nonlin) and FL (f.lin), with Ss the types σ of F's non-linear results
+% and TT the tape type ⊗π. Its clauses are loaded in the context by
+% unzip-prog.
+func ufn fn -> nfn, lfn, list ty, ty.
 
+% [unzip E R] R is U(E) ⇝ E; e'; ė': a context of non-linear lets and
+% unpacks whose hole holds the non-linear part e' and the linear part ė'.
 func unzip linA.expr -> ctx.
-% URet
-unzip (linA.ret Vs Ls) (hole (linB.ret Vs) (lret Ls)) :- !.
-% ULet
-unzip (linA.let E1 B) R :- !, unzip E1 R1, plug R1 (let-k B) R.
-% UUnpack
-unzip (linA.unpack V B) (cunpack V B') :- !, unpack-nb B B'.
-% ULinUnpack
-unzip (linA.lunpack D B) R :- !, lunpack-lb D B [] R.
-% UApp
-unzip (linA.app F Vs Ls) (clet (linB.app FN Vs) B) :- !,
+unzip (linA.ret Vs Ls) (hole (linB.ret Vs) (lret Ls)) :- !. % URet
+unzip (linA.let E1 B) R :- !, % ULet
+  unzip E1 R1, plug R1 (let-k B) R.
+unzip (linA.unpack V B) (cunpack V B') :- !, % UUnpack
+  unpack-nb B B'.
+unzip (linA.lunpack D B) R :- !, % ULinUnpack
+  lunpack-lb D B [] R.
+unzip (linA.app F Vs Ls) (clet (linB.app FN Vs) B) :- !, % UApp
   ufn F FN FL Ss TT, app-spine TT FL Ls Ss [] B.
-% UDrop
-unzip (linA.drop E) R :- !, unzip E R0, plug R0 drop-k R.
-% ULeaf
-unzip E (hole (leaf E) (lret [])) :- linB.nleaf E, !.
-% ULinLeaf
-unzip E (hole (linB.ret []) (lleaf E)) :- linB.lleaf? E.
+unzip (linA.drop E) R :- !, % UDrop
+  unzip E R0, plug R0 drop-k R.
+unzip E (hole (leaf E) (lret [])) :- % ULeaf
+  linB.nleaf E, !.
+unzip E (hole (linB.ret []) (lleaf E)) :- % ULinLeaf
+  linB.lleaf? E.
 
-% ULet: E1, let (v:τ ;) = e1' in E2 ; e2' ; let (; v̇:τ̇) = ė1' in ė2'.
+% [let-k B N1 L1 R] finishes ULet once e1 is unzipped to E1 with hole
+% (N1, L1), and B binds v and v̇ in e2: R is let (v:τ ;) = e1' in E2 with
+% hole (e2', let (; v̇:τ̇) = ė1' in ė2'), so that E1 with R in its hole is
+%   E1, let (v:τ ;) = e1' in E2 ; e2' ; let (; v̇:τ̇) = ė1' in ė2'.
 func let-k linA.nbind linA.expr, nexpr, lexpr -> ctx.
 let-k B N1 L1 R :- let-nb L1 B B', mk-clet N1 B' R.
 
+% [let-nb L1 B B'] B' keeps the non-linear binders v of B; under them is
+% the context let-lb builds from B's linear binders and body.
 func let-nb lexpr, linA.nbind linA.expr -> nabs ctx.
 let-nb L1 (linA.nb T B) (linB.nb T B') :- pi x\ let-nb L1 (B x) (B' x).
 let-nb L1 (linA.nend LB) (linB.nend C) :- let-lb L1 [] LB C.
 
+% [let-lb L1 Acc B C] C is U(e2), where B binds v̇ in e2, with its hole
+% (e2', ė2') replaced by (e2', let (; v̇:τ̇) = L1 in ė2'). Acc holds the
+% linear binders seen so far, reversed.
 func let-lb lexpr, list (pair lin ty), linA.lbind linA.expr -> ctx.
 let-lb L1 Acc (linA.lb T B) C :- pi d\ let-lb L1 [pr d T|Acc] (B d) C.
 let-lb L1 Acc (linA.lend E2) C :-
   std.rev Acc Ds, unzip E2 R2, plug R2 (llet-k L1 Ds) C.
 
+% [llet-k L1 Ds N2 L2 C] C is the hole (N2, let (; Ds) = L1 in L2), where
+% the binders Ds are moved around L2 by a copy with renaming.
 func llet-k lexpr, list (pair lin ty), nexpr, lexpr -> ctx.
 llet-k L1 Ds N2 L2 (hole N2 L) :- rebind Ds L2 LB, mk-llet L1 LB L.
 
 % let (;) = (;) in E is just E, and let (;) = (;) in ė is just ė: both are
 % left out (they cost nothing).
+
+% [mk-clet N B C] C is let (v ;) = N in B, or just B's body when N is (;)
+% and B binds nothing.
 func mk-clet nexpr, nabs ctx -> ctx.
 mk-clet (linB.ret []) (linB.nend C) C :- !.
 mk-clet N B (clet N B).
 
+% [mk-llet L1 LB L] L is let (; v̇) = L1 in LB, or just LB's body when L1 is
+% (;) and LB binds nothing.
 func mk-llet lexpr, labs lexpr -> lexpr.
 mk-llet (lret []) (linB.lend L) L :- !.
 mk-llet L1 LB (llet L1 LB).
 
+% [unpack-nb B B'] B' keeps the binders w of B around U of its body, for
 % UUnpack: let (⊗w:⊗τ ;) = v in E ; e' ; ė'.
 func unpack-nb linA.nbind linA.expr -> nabs ctx.
 unpack-nb (linA.nb T B) (linB.nb T B') :- pi x\ unpack-nb (B x) (B' x).
 unpack-nb (linA.nend (linA.lend E)) (linB.nend R) :- unzip E R.
 
-% ULinUnpack: E ; e' ; let (; ⊗ẇ:⊗τ̇) = v̇ in ė'.
+% [lunpack-lb D B Acc R] R is U(e), where B binds ẇ in e, with its hole
+% (e', ė') replaced by (e', let (; ⊗ẇ:⊗τ̇) = D in ė'), for ULinUnpack:
+% E ; e' ; let (; ⊗ẇ:⊗τ̇) = v̇ in ė'. Acc holds the binders seen so far,
+% reversed.
 func lunpack-lb lin, linA.lbind linA.expr, list (pair lin ty) -> ctx.
 lunpack-lb D (linA.lb T B) Acc R :- pi d\ lunpack-lb D (B d) [pr d T|Acc] R.
 lunpack-lb D (linA.lend E) Acc R :-
   std.rev Acc Ds, unzip E R0, plug R0 (lunpack-k D Ds) R.
 
+% [lunpack-k D Ds N L C] C is the hole (N, let (; ⊗Ds) = D in L), where the
+% binders Ds are moved around L by a copy with renaming.
 func lunpack-k lin, list (pair lin ty), nexpr, lexpr -> ctx.
 lunpack-k D Ds N L (hole N (linB.lunpack D LB)) :- rebind Ds L LB.
 
-% UApp: let (u:τ, w:⊗π ;) = f.nonlin(v ;) in □ ; (u ;) ; f.lin(w ; v̇).
+% [app-spine TT FL Ls Ss Acc B] B binds u (of types Ss) and w (of type TT)
+% around the hole ((u ;), FL(w ; Ls)), for UApp:
+% let (u:τ, w:⊗π ;) = f.nonlin(v ;) in □ ; (u ;) ; f.lin(w ; v̇).
+% Acc holds the u bound so far, reversed.
 func app-spine ty, lfn, list lin, list ty, list nl -> nabs ctx.
 app-spine TT FL Ls [] Acc
     (linB.nb TT w\ linB.nend (hole (linB.ret Us) (lapp FL [w] Ls))) :-
@@ -203,7 +258,8 @@ app-spine TT FL Ls [] Acc
 app-spine TT FL Ls [S|Ss] Acc (linB.nb S B) :-
   pi u\ app-spine TT FL Ls Ss [u|Acc] (B u).
 
-% UDrop: E ; drop(e') ; drop(ė').
+% [drop-k N L C] C is the hole (drop(N), drop(L)), for UDrop:
+% E ; drop(e') ; drop(ė').
 func drop-k nexpr, lexpr -> ctx.
 drop-k N L (hole (linB.drop N) (ldrop L)).
 
@@ -214,11 +270,16 @@ drop-k N L (hole (linB.drop N) (ldrop L)).
 %     def f.lin(u:⊗π ; v̇:τ̇) -> (; σ̇) = let (⊗w:⊗π ;) = u in ė'
 % where w:π are the variables bound by v and E that ė' reads (the tape).
 
+% [unzip-def D ND LD Ss T] unzips the definition D: ND is f.nonlin, LD is
+% f.lin, Ss are the types σ of the non-linear results and T is the tape type
+% ⊗π.
 func unzip-def linA.nbind fbody
   -> nabs nfbody, nabs (labs lfbody), list ty, ty.
 unzip-def D ND LD Ss (tup Pis) :- def-nb [] D ND LD Ss Pis.
 
-% G holds the non-linear variables bound so far (v, then E), reversed.
+% [def-nb G D ND LD Ss Pis] is unzip-def on D, where G holds the
+% non-linear variables bound so far (v, then E), reversed; ND keeps D's
+% non-linear parameters and Pis are the types of the tape.
 func def-nb list (pair nl ty), linA.nbind fbody
   -> nabs nfbody, nabs (labs lfbody), list ty, list ty.
 def-nb G (linA.nb T B) (linB.nb T B') LD Ss Pis :-
@@ -226,6 +287,9 @@ def-nb G (linA.nb T B) (linB.nb T B') LD Ss Pis :-
 def-nb G (linA.nend LB) (linB.nend NB) LD Ss Pis :-
   def-lb G [] LB NB LD Ss Pis.
 
+% [def-lb G Acc B NB LD Ss Pis] is def-nb on the linear parameters and body
+% B: Acc holds the linear parameters seen so far, reversed, and NB is the
+% body of f.nonlin.
 func def-lb list (pair nl ty), list (pair lin ty), linA.lbind fbody
   -> nfbody, nabs (labs lfbody), list ty, list ty.
 def-lb G Acc (linA.lb T B) NB LD Ss Pis :-
@@ -235,48 +299,55 @@ def-lb G Acc (linA.lend (body Ss LSs E)) (nbody Ss' NE) LD Ss Pis :-
   ctx->nexpr (def-hole Ss LSs Ds LD Pis) G R NE,
   std.append Ss [tup Pis] Ss'.
 
-% Turn E into a non-linear expression, extending G with E's binders; at the
-% hole, K builds the end of f.nonlin (and, as a side output, f.lin).
+% [ctx->nexpr K G C NE] NE is the context C as a non-linear expression;
+% at the hole, K builds the end of f.nonlin (and, as a side output, f.lin)
+% from G extended with C's binders (in order) and the hole's (e', ė').
 func ctx->nexpr (func list (pair nl ty), nexpr, lexpr -> nexpr),
   list (pair nl ty), ctx -> nexpr.
 ctx->nexpr K G (hole N L) NE :- std.rev G G', K G' N L NE.
 ctx->nexpr K G (clet E B) (linB.let E B') :- ctx-nabs K G B B'.
 ctx->nexpr K G (cunpack V B) (linB.unpack V B') :- ctx-nabs K G B B'.
 
+% [ctx-nabs K G B B'] is ctx->nexpr under the binders of B, which B' keeps
+% and which are added to G.
 func ctx-nabs (func list (pair nl ty), nexpr, lexpr -> nexpr),
   list (pair nl ty), nabs ctx -> nabs nexpr.
 ctx-nabs K G (linB.nb T B) (linB.nb T B') :-
   pi x\ ctx-nabs K [pr x T|G] (B x) (B' x).
 ctx-nabs K G (linB.nend C) (linB.nend NE) :- ctx->nexpr K G C NE.
 
-% At the hole: W, the tape, is the part of G that ė' reads. f.nonlin ends
-% by returning e' and ⊗(W); f.lin unpacks W from its first argument.
+% [def-hole Ss LSs Ds LD Pis G N L NE] finishes UDef at the hole of E,
+% where N is e' and L is ė'. G lists the non-linear variables bound by v
+% and by E; the tape is the part of G that L reads, and Pis are its types.
+% NE ends f.nonlin: it returns the results of N (of types Ss) and the tape
+% as one tuple. LD is f.lin: it takes the tape and the linear parameters
+% Ds, unpacks the tape, and runs L (results of types LSs).
 func def-hole list ty, list ty, list (pair lin ty), nabs (labs lfbody),
   list ty, list (pair nl ty), nexpr, lexpr -> nexpr.
 def-hole Ss LSs Ds LD Pis G N L NE :-
   locc L Occ, std.filter G (tape-var Occ) W,
-  std.map W pair-snd Pis', std.map W pair-fst Ws,
+  std.unzip W Ws Pis',
   tape-tail Ss Ws Pis' N NE,
   (pi u\ flin-lins u W LSs L Ds (LB u)),
   Pis = Pis', LD = linB.nb (tup Pis') (u\ linB.nend (LB u)).
 
+% [tape-var Occ P] the variable of P is in Occ.
 func tape-var list nl, pair nl ty.
 tape-var Occ (pr X _) :- std.mem! Occ X.
 
-func pair-fst pair A B -> A.
-pair-fst (pr A _) A.
-
-func pair-snd pair A B -> B.
-pair-snd (pr _ B) B.
-
-% E(e', ⊗(w)): let (t:⊗π ;) = ⊗(w) in (e' results, t ;). When e' is
-% already (v ;), its results are used directly.
+% [tape-tail Ss Ws Pis N NE] NE is E(e', ⊗(w)) for N = e' and the tape Ws
+% of types Pis: let (t:⊗π ;) = ⊗(w) in (e' results, t ;). When N is
+% already (v ;), its results are used directly; otherwise they are bound,
+% with types Ss.
 func tape-tail list ty, list nl, list ty, nexpr -> nexpr.
 tape-tail _ Ws Pis (linB.ret Vs)
     (linB.let (leaf (tuple Ws)) (linB.nb (tup Pis) t\ linB.nend (linB.ret (Vs' t)))) :- !,
   pi t\ std.append Vs [t] (Vs' t).
 tape-tail Ss Ws Pis N (linB.let N B) :- res-spine Ws Pis Ss [] B.
 
+% [res-spine Ws Pis Ss Acc B] B binds the results r (of types Ss) of e',
+% then returns them with the tape: let (t:⊗π ;) = ⊗(Ws) in (r, t ;). Acc
+% holds the r bound so far, reversed.
 func res-spine list nl, list ty, list ty, list nl -> nabs nexpr.
 res-spine Ws Pis [] Acc
     (linB.nend (linB.let (leaf (tuple Ws))
@@ -285,13 +356,17 @@ res-spine Ws Pis [] Acc
 res-spine Ws Pis [S|Ss] Acc (linB.nb S B) :-
   pi r\ res-spine Ws Pis Ss [r|Acc] (B r).
 
-% f.lin: the linear parameters (renamed), then let (⊗w ;) = u in ė'.
+% [flin-lins U W LSs L Ds LB] LB is the rest of f.lin after its tape
+% parameter U: fresh linear parameters with the types of Ds, then
+% let (⊗w ;) = U in L, with Ds and the tape W renamed to the new binders.
 func flin-lins nl, list (pair nl ty), list ty, lexpr, list (pair lin ty)
   -> labs lfbody.
 flin-lins U W LSs L [] (linB.lend (lbody LSs (nunpack U NB))) :- flin-tape L W NB.
 flin-lins U W LSs L [pr D T|Ds] (linB.lb T B) :-
   pi d\ cp-lin D d =!=> flin-lins U W LSs L Ds (B d).
 
+% [flin-tape L W NB] NB binds fresh variables for the tape W around a copy
+% of L in which each variable of W is renamed to its binder.
 func flin-tape lexpr, list (pair nl ty) -> nabs lexpr.
 flin-tape L [] (linB.nend L') :- cp-lexpr L L'.
 flin-tape L [pr X T|W] (linB.nb T B) :- pi w\ cp-nl X w =!=> flin-tape L W (B w).
@@ -301,6 +376,7 @@ flin-tape L [pr X T|W] (linB.nb T B) :- pi w\ cp-nl X w =!=> flin-tape L W (B w)
 % Each definition f becomes f.nonlin then f.lin; calls to f are unzipped
 % by UApp into calls to both.
 
+% [unzip-prog P B] B is U of the Linear A program P.
 func unzip-prog linA.prog -> linB.prog.
 unzip-prog linA.pnil linB.pnil.
 unzip-prog (linA.def D P) (ndef ND fn\ ldef LD fl\ P' fn fl) :-

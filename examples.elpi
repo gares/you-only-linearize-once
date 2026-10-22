@@ -17,7 +17,7 @@ shorten linA.{
   lzero, ltuple, lplus, lmul, dup, drop, fbody, body, prog, def, pnil }.
 shorten linA.{ sin, cos, exp, neg }.
 
-% g(x ; ẏ) = (x² ; x²ẏ), from Section 4.1:
+% [g D] D is g(x ; ẏ) = (x² ; x²ẏ), from Section 4.1:
 %   def g(x:R ; ẏ:R) -> (R ; R) =
 %     let (a:R ;) = x * x in
 %     let (; ḃ:R) = a * ẏ in
@@ -28,24 +28,25 @@ g (nb r x\ nend (lb r y\ lend (body [r] [r]
   (let (lmul a y) (nend (lb r b\ lend
   (ret [a] [b])))))))))).
 
-% Ill-typed: ẏ is used twice.
+% [bad-twice D] D is ill-typed: ẏ is used twice.
 func bad-twice -> nbind fbody.
 bad-twice (nb r x\ nend (lb r y\ lend (body [r] [r, r]
   (ret [x] [y, y])))).
 
-% Ill-typed: x is never used (it should be dropped).
+% [bad-unused D] D is ill-typed: x is never used (it should be dropped).
 func bad-unused -> nbind fbody.
 bad-unused (nb r x\ nend (lb r y\ lend (body [] [r]
   (ret [] [y])))).
 
-% Well-typed: x is dropped explicitly, ẏ is duplicated explicitly.
+% [drop-dup D] D is well-typed: x is dropped explicitly, ẏ is duplicated
+% explicitly.
 func drop-dup -> nbind fbody.
 drop-dup (nb r x\ nend (lb r y\ lend (body [] [r, r]
   (let (drop (nvar x)) (nend (lend
   (let (dup y) (nend (lb r y1\ lb r y2\ lend
   (ret [] [y1, y2])))))))))).
 
-% Unpacking lets: split a non-linear pair and a linear pair.
+% [swap D] D splits a non-linear pair and a linear pair with unpacking lets:
 %   def swap(p:⊗(R,R) ; q̇:⊗(R,R)) -> (R,R ; R,R) =
 %     let (⊗(a,b) ;) = p in let (; ⊗(ċ,ḋ)) = q̇ in (b,a ; ḋ,ċ)
 func swap -> nbind fbody.
@@ -55,7 +56,7 @@ swap (nb (tup [r,r]) p\ nend (lb (tup [r,r]) q\ lend
   (lunpack q (lb r c\ lb r d\ lend
   (ret [b,a] [d,c]))))))))).
 
-% A program calling g after its definition.
+% [g-prog P] P is a program calling g after its definition.
 func g-prog -> prog.
 g-prog P :-
   g G,
@@ -63,7 +64,7 @@ g-prog P :-
       def (nb r x\ nend (lb r y\ lend (body [r] [r] (app f [x] [y])))) _\
       pnil.
 
-% The forward derivative of sin, as J would produce it:
+% [dsin D] D is the forward derivative of sin, as J would produce it:
 %   def dsin(x:R ; ẋ:R) -> (R ; R) =
 %     let (s:R ;) = sin(x) in let (c:R ;) = cos(x) in
 %     let (; ḋ:R) = c * ẋ in (s ; ḋ)
@@ -76,7 +77,7 @@ dsin (nb r x\ nend (lb r dx\ lend (body [r] [r]
 
 % --- Inputs to forward.dj: purely non-linear definitions ----------------------
 
-% The running example of the paper (Figure 6): f(u) = −sin(u)
+% [neg-sin D] D is f(u) = −sin(u), the running example of the paper (Figure 6):
 %   def f(u:R ;) -> (R ;) = let (v:R ;) = sin(u) in let (w:R ;) = −v in (w ;)
 func neg-sin -> nbind fbody.
 neg-sin (nb r u\ nend (lend (body [r] []
@@ -84,8 +85,8 @@ neg-sin (nb r u\ nend (lend (body [r] []
   (let (neg v) (nb r w\ nend (lend
   (ret [w] [])))))))))).
 
-% Figure 6, right: J(neg-sin) after flatten and copyprop. Linear A has no
-% linear negation, so −v̇ is -1.0 * v̇.
+% [neg-sin-J D] D is J(neg-sin) after flatten and copyprop, as in Figure 6,
+% right. Linear A has no linear negation, so −v̇ is -1.0 * v̇.
 %   def f^J(u:R ; u̇:R) -> (R ; R) =
 %     let (v ;) = sin(u) in let (du ;) = cos(u) in let (; v̇) = du * u̇ in
 %     let (w ;) = −v in let (m ;) = -1.0 in let (; ẇ) = m * v̇ in (w ; ẇ)
@@ -99,25 +100,27 @@ neg-sin-J (nb r u\ nend (lb r du\ lend (body [r] [r]
   (let (lmul m dv) (nend (lb r dw\ lend
   (ret [w] [dw])))))))))))))))))))))).
 
-% sin1(u) = sin(u): its derivative unzips to Figure 9 (exampleB.dsin-unzipped)
+% [sin1 D] D is sin1(u) = sin(u): its derivative unzips to Figure 9
+% (exampleB.dsin-unzipped).
 func sin1 -> nbind fbody.
 sin1 (nb r x\ nend (lend (body [r] [] (sin x)))).
 
-% sq(x) = x * x  (x is used twice, so its tangent is dup-ed)
+% [sq D] D is sq(x) = x * x: x is used twice, so its tangent is dup-ed.
 func sq -> nbind fbody.
 sq (nb r x\ nend (lend (body [r] [] (mul x x)))).
 
-% h(x) = let s = sin(x) in let p = x * s in exp(p)
-% (x is free in both the bound expression and the body of the first let)
+% [h D] D is h(x) = let s = sin(x) in let p = x * s in exp(p), where x is free
+% in both the bound expression and the body of the first let.
 func h -> nbind fbody.
 h (nb r x\ nend (lend (body [r] []
   (let (sin x) (nb r s\ nend (lend
   (let (mul x s) (nb r p\ nend (lend
   (exp p)))))))))).
 
+% [m D] D is m below, where p is used after unpacking it (rule JUnpackB) and
+% 2.0 uses rule JLit:
 % m(p : ⊗(R,R)) = let (⊗(a,b) ;) = p in let c = a * b in
 %                 let w = 2.0 in let d = c * w in (d, p ;)
-% (p is used after unpacking it: rule JUnpackB; 2.0 uses JLit)
 func m -> nbind fbody.
 m (nb (tup [r,r]) p\ nend (lend (body [r, tup [r,r]] []
   (unpack p (nb r a\ nb r b\ nend (lend
@@ -126,7 +129,7 @@ m (nb (tup [r,r]) p\ nend (lend (body [r, tup [r,r]] []
   (let (mul c w) (nb r d\ nend (lend
   (ret [d, p] [])))))))))))))))).
 
-% A program: sq, then k(x) = let y = sq(x) in y + x.
+% [k-prog P] P is a program: sq, then k(x) = let y = sq(x) in y + x.
 func k-prog -> prog.
 k-prog P :-
   sq Sq,
@@ -137,6 +140,7 @@ k-prog P :-
 
 % --- Input to erase.lerase-prog: linear +, * and 0̇ at a tuple type -----------
 
+% [lin-tup D] D uses linear +, * and 0̇ at a tuple type:
 %   def lt(; ẋ:⊗(R,R)) -> (; ⊗(R,R)) =
 %     let (; ż) = 0̇_⊗(R,R) in let (; ṡ) = ẋ + ż in
 %     let (w ;) = 2.0 in let (; ṫ) = w * ṡ in (; ṫ)
@@ -157,8 +161,9 @@ shorten linB.{
   nb, nend, lb, lend, ret, let, leaf, lret, llet, nunpack, lleaf,
   nbody, lbody, ndef, ldef, pnil }.
 
-% example.dsin unzipped as in Figure 9: the non-linear part computes sin x
-% and returns the tape ⊗(cos x); the linear part reads the tape.
+% [dsin-nonlin D] D is the non-linear part of example.dsin unzipped as in Figure
+% 9: it computes sin x and returns the tape ⊗(cos x). The linear part, dsin-lin,
+% reads the tape:
 %   def f.nonlin(x:R ;) -> (R, ⊗(R) ;) =
 %     let (s:R ;) = sin(x) in let (c:R ;) = cos(x) in
 %     let (t:⊗(R) ;) = ⊗(c) in (s, t ;)
@@ -171,13 +176,15 @@ dsin-nonlin (nb r x\ nend (nbody [r, tup [r]]
   (let (leaf (linA.tuple [c])) (nb (tup [r]) t\ nend
   (ret [s, t]))))))))).
 
+% [dsin-lin D] D is the linear part of example.dsin unzipped, f.lin above.
 func dsin-lin -> linB.nabs (linB.labs linB.lfbody).
 dsin-lin (nb (tup [r]) t\ nend (lb r dx\ lend (lbody [r]
   (nunpack t (nb r c\ nend
   (llet (lleaf (linA.lmul c dx)) (lb r d\ lend
   (lret [d])))))))).
 
-% Both, in one program: the entry point (the last definition) is f.lin.
+% [dsin-unzipped P] P is dsin-nonlin and dsin-lin in one program: the entry
+% point (the last definition) is f.lin.
 func dsin-unzipped -> linB.prog.
 dsin-unzipped (ndef N _\ ldef L _\ pnil) :- dsin-nonlin N, dsin-lin L.
 

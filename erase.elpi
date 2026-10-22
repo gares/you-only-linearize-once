@@ -32,11 +32,19 @@ symb opz ty -> op.   % 0̇ at a type
 symb opp ty -> op.   % linear + at a type
 symb opm ty -> op.   % linear * at a type (the scalar is always R)
 
-func lty  lin -> ty.            % types of linear variables, for lops
-func lmap lin -> nl, ty.        % linear variable ↦ its erased variable
-func opfn op -> fn.             % op ↦ the function implementing it
+% [lty D T] T is the type of the linear variable D (loaded with ==> by
+% lops-lb, for lops).
+func lty  lin -> ty.
 
-% Which ops a program uses.
+% [lmap D X T] X is the non-linear variable that the linear variable D, of
+% type T, is erased to (loaded with ==>).
+func lmap lin -> nl, ty.
+
+% [opfn Op F] F is the function implementing Op (loaded with =!=> by
+% with-ops).
+func opfn op -> fn.
+
+% [lops E L] L lists the ops that E uses (with repetitions).
 func lops expr -> list op.
 lops (let E B) L :- lops E L1, lops-nb B lops L2, std.append L1 L2 L.
 lops (unpack _ B) L :- lops-nb B lops L.
@@ -60,40 +68,51 @@ lops (lvar _) [].
 lops (ltuple _) [].
 lops (dup _) [].
 
+% [lops-nb B K L] L lists the ops that the body of the binder spine B uses,
+% computed by K under the binders (with lty loaded for the linear ones).
 func lops-nb nbind A, (func A -> list op) -> list op.
 lops-nb (nb _ B) K L :- pi x\ lops-nb (B x) K L.
 lops-nb (nend LB) K L :- lops-lb LB K L.
 
+% [lops-lb B K L] is lops-nb for a linear spine B.
 func lops-lb lbind A, (func A -> list op) -> list op.
 lops-lb (lb T B) K L :- pi d\ lty d T ==> lops-lb (B d) K L.
 lops-lb (lend X) K L :- K X L.
 
+% [lops-body B L] L lists the ops that the function body B uses.
 func lops-body fbody -> list op.
 lops-body (body _ _ E) L :- lops E L.
 
+% [lops-prog P L] L lists the ops that the program P uses.
 func lops-prog prog -> list op.
 lops-prog pnil [].
 lops-prog (def D P) L :-
   lops-nb D lops-body L1, (pi f\ lops-prog (P f) L2), std.append L1 L2 L.
 
-% Close under components (an op on a tuple uses the op on each component)
-% and order the result so that components come first.
+% [close-ops Ops Acc Out] Out is Acc extended with Ops, closed under
+% components (an op on a tuple uses the op on each component), without
+% duplicates and ordered so that components come first.
 func close-ops list op, list op -> list op.
 close-ops [] Acc Acc.
 close-ops [Op|Ops] Acc Out :- add-op Op Acc Acc1, close-ops Ops Acc1 Out.
 
+% [add-op Op Acc Out] Out is Acc extended with Op, after the ops it depends
+% on, unless Acc already has it.
 func add-op op, list op -> list op.
 add-op Op Acc Acc :- std.mem! Acc Op, !.
 add-op Op Acc Out :-
   op-deps Op Ds, close-ops Ds Acc Acc1, std.append Acc1 [Op] Out.
 
+% [op-deps Op Ds] Ds are the ops on the components that Op on a tuple uses;
+% [] for an op at type R.
 func op-deps op -> list op.
 op-deps (opz (tup Ts)) Ds :- !, std.map Ts (t\ o\ o = opz t) Ds.
 op-deps (opp (tup Ts)) Ds :- !, std.map Ts (t\ o\ o = opp t) Ds.
 op-deps (opm (tup Ts)) Ds :- !, std.map Ts (t\ o\ o = opm t) Ds.
 op-deps _ [].
 
-% The definition implementing an op.
+% [op-def Op D] D is the definition of the non-linear function implementing
+% Op, calling the functions of its components through opfn.
 func op-def op -> nbind fbody.
 op-def (opz r) (nend (lend (body [r] [] (lit 0.0)))) :- !.
 op-def (opz (tup Ts)) (nend (lend (body [tup Ts] [] E))) :- !,
@@ -107,35 +126,48 @@ op-def (opm (tup Ts))
   (nb r a\ nb (tup Ts) x\ nend (lend (body [tup Ts] [] (E a x)))) :-
   pi a\ pi x\ mk-unpack x Ts (mk-scale a Ts []) (E a x).
 
+% [mk-zero Ts Acc E] E builds the tuple of the zeros of the types Ts, after
+% the variables in Acc (reversed), each by a call to the 0̇ function of its
+% type.
 func mk-zero list ty, list nl -> expr.
 mk-zero [] Acc (tuple Vs) :- std.rev Acc Vs.
 mk-zero [T|Ts] Acc (let (app F [] []) (nb T z\ nend (lend (E z)))) :-
   opfn (opz T) F, pi z\ mk-zero Ts [z|Acc] (E z).
 
-% let (⊗xs ;) = X in K xs
+% [mk-unpack X Ts K E] E is let (⊗xs ;) = X in K xs, where xs are fresh
+% variables of types Ts.
 func mk-unpack nl, list ty, (func list nl -> expr) -> expr.
 mk-unpack X Ts K (unpack X B) :- bind-list Ts [] K B.
 
+% [bind-list Ts Acc K B] B binds one fresh variable per type in Ts, and its
+% body is K applied to Acc (reversed) followed by those variables.
 func bind-list list ty, list nl, (func list nl -> expr) -> nbind expr.
 bind-list [] Acc K (nend (lend E)) :- std.rev Acc Xs, K Xs E.
 bind-list [T|Ts] Acc K (nb T B) :- pi x\ bind-list Ts [x|Acc] K (B x).
 
-% Unpack two tuples X and Y of the same type, then K xs ys.
+% [mk-unpack2 X Y Ts K E] E unpacks the two tuples X and Y, both of
+% components of types Ts, into xs and ys, then runs K Ts xs ys.
 func mk-unpack2 nl, nl, list ty, (func list ty, list nl, list nl -> expr)
   -> expr.
 mk-unpack2 X Y Ts K E :-
   mk-unpack X Ts (Xs\ R\ mk-unpack Y Ts (K Ts Xs) R) E.
 
+% [mk-plus Ts Xs Ys E] E is the tuple of the sums of Xs and Ys, componentwise
+% (of types Ts), each by a call to the linear + function of its type.
 func mk-plus list ty, list nl, list nl -> expr.
 mk-plus Ts Xs Ys E :- mk-plus-acc Ts Xs Ys [] E.
 
+% [mk-plus-acc Ts Xs Ys Acc E] is mk-plus, where Acc holds the sums made so
+% far, in reverse order.
 func mk-plus-acc list ty, list nl, list nl, list nl -> expr.
 mk-plus-acc [] [] [] Acc (tuple Vs) :- std.rev Acc Vs.
 mk-plus-acc [T|Ts] [X|Xs] [Y|Ys] Acc
     (let (app F [X, Y] []) (nb T s\ nend (lend (E s)))) :-
   opfn (opp T) F, pi s\ mk-plus-acc Ts Xs Ys [s|Acc] (E s).
 
-% Acc (the scaled components so far, reversed) comes before Xs, so that
+% [mk-scale A Ts Acc Xs E] E is the tuple of the components Xs (of types Ts)
+% scaled by A, each by a call to the linear * function of its type. Acc (the
+% scaled components so far, reversed) comes before Xs, so that
 % mk-scale A Ts [] is the continuation of mk-unpack.
 func mk-scale nl, list ty, list nl, list nl -> expr.
 mk-scale _ [] Acc [] (tuple Vs) :- std.rev Acc Vs.
@@ -143,20 +175,28 @@ mk-scale A [T|Ts] Acc [X|Xs]
     (let (app F [A, X] []) (nb T s\ nend (lend (E s)))) :-
   opfn (opm T) F, pi s\ mk-scale A Ts [s|Acc] Xs (E s).
 
+% [lname D X] X is the non-linear variable that the linear variable D is
+% erased to.
 func lname lin -> nl.
 lname D X :- lmap D X _.
 
-% Erase a binder spine: linear binders become non-linear binders placed
-% after the non-linear ones.
+% [le-nb B K B'] B' is the binder spine B erased: its linear binders become
+% non-linear binders placed after the non-linear ones (with lmap loaded),
+% and its body is erased by K.
 func le-nb nbind A, (func A -> A) -> nbind A.
 le-nb (nb T B) K (nb T B') :- pi x\ le-nb (B x) K (B' x).
 le-nb (nend L) K L' :- le-lb L K L'.
 
+% [le-lb B K B'] is le-nb for a linear spine B: B' binds non-linear variables
+% instead.
 func le-lb lbind A, (func A -> A) -> nbind A.
 le-lb (lend X) K (nend (lend X')) :- K X X'.
 le-lb (lb T B) K (nb T B') :-
   pi d\ pi x\ lmap d x T ==> le-lb (B d) K (B' x).
 
+% [lerase E E'] E' is L(E): E with every linear variable and expression made
+% non-linear, linear arguments and results moved after the non-linear ones,
+% and linear 0̇, + and * replaced by calls to the functions given by opfn.
 func lerase expr -> expr.
 lerase (ret Vs LVs) (ret Ws []) :-
   std.map LVs lname Xs, std.append Vs Xs Ws.
@@ -187,23 +227,31 @@ lerase (lmul V D) (app F [V, X] []) :- lmap D X T, opfn (opm T) F.
 lerase (dup D) (ret [X, X] []) :- lname D X.
 lerase (drop E) (drop E') :- lerase E E'.
 
+% [lerase-body B B'] B' is the function body B erased: its linear results
+% come after the non-linear ones.
 func lerase-body fbody -> fbody.
 lerase-body (body Ss LSs E) (body Ts [] E') :-
   std.append Ss LSs Ts, lerase E E'.
 
+% [lerase-def D D'] D' is the definition D erased, with its linear parameters
+% after the non-linear ones.
 func lerase-def nbind fbody -> nbind fbody.
 lerase-def D D' :- le-nb D lerase-body D'.
 
+% [lerase-defs P P'] P' is the program P with every definition erased.
 func lerase-defs prog -> prog.
 lerase-defs pnil pnil.
 lerase-defs (def D P) (def D' P') :-
   lerase-def D D', pi f\ lerase-defs (P f) (P' f).
 
-% Define the op functions first, then the erased program.
+% [lerase-prog P P'] P' is L(P): the definitions of the op functions that P
+% needs, then the erased program.
 func lerase-prog prog -> prog.
 lerase-prog P P' :-
   lops-prog P Ops0, close-ops Ops0 [] Ops, with-ops Ops P P'.
 
+% [with-ops Ops P P'] P' defines the functions implementing Ops, in order,
+% then the erased P, with opfn mapping each op to its function.
 func with-ops list op, prog -> prog.
 with-ops [] P P' :- lerase-defs P P'.
 with-ops [Op|Ops] P (def D P') :-

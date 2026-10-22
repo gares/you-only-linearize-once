@@ -27,18 +27,24 @@ shorten lincheckA.{ of-def, of-prog }.
 shorten evalA.{ run, run-def }.
 shorten ppA.{ prog->string, def->string }.
 
-% Values equal up to 1e-9.
+% [approx A B] succeeds if the values A and B have the same shape and their
+% reals are equal up to 1e-9.
 func approx linA.val, linA.val.
 approx (real A) (real B) :- D is A - B, D < 0.000000001, D > -0.000000001.
 approx (vtup Xs) (vtup Ys) :- std.forall2 Xs Ys approx.
 
+% [approx-list Xs Ys] succeeds if the values Xs and Ys are pairwise approx.
 func approx-list list linA.val, list linA.val.
 approx-list Xs Ys :- std.forall2 Xs Ys approx.
 
+% [check Msg G] runs G once and prints ok: Msg if it succeeds, or prints FAILED:
+% Msg and fails.
 func check string, (func).
 check Msg G :- G, !, print "ok:" Msg.
 check Msg _ :- print "FAILED:" Msg, fail.
 
+% [linA-tests] type-checks, runs and prints the Linear A examples, and checks
+% that the ill-typed ones are rejected.
 func linA-tests.
 linA-tests :-
   example.g G, of-def G Ts LTs Ss LSs,
@@ -60,6 +66,9 @@ linA-tests :-
   def->string D SD, print SD, print "",
   def->string U SU, print SU.
 
+% [forward-tests] checks that J (forward.dj) gives definitions and programs that
+% type-check and compute the expected values and derivatives, and that J rejects
+% a definition with linear inputs.
 func forward-tests.
 forward-tests :-
   print "--- forward derivative J (forward.dj) ---",
@@ -102,6 +111,9 @@ forward-tests :-
     (approx-list O4 [real 12.0], approx-list L4 [real 7.0]),
   check "dj rejects linear input" (not (example.g G, forward.dj-def G _)).
 
+% [erase-tests] checks that L (erase.lerase-prog) gives programs that type-check
+% and compute the same results at the same cost, including linear +, * and 0̇ at
+% a tuple type.
 func erase-tests.
 erase-tests :-
   print "--- linearity erasure L (erase.lerase-prog) ---",
@@ -141,6 +153,9 @@ erase-tests :-
   check "L(lt) computes the same result with the same cost"
     (approx-list O4 L4, C4 = C4E).
 
+% [linB-tests] checks that the unzipped dsin of Figure 9 type-checks once
+% included in Linear A and computes dsin, and that leaves of the wrong linearity
+% are rejected.
 func linB-tests.
 linB-tests :-
   print "--- Linear B (linB) ---",
@@ -163,9 +178,10 @@ linB-tests :-
   check "a non-linear leaf in a linear expression is rejected"
     (pi x\ not (linB.lexpr->A (linB.lleaf (linA.sin x)) _)).
 
-% Unzip J(P), and check Theorem 6.2 on it: U(J(P)) type-checks, and running
-% f.nonlin(x ;) and then f.lin(tape ; ẋ) gives the results and the cost of
-% J(P)(x ; ẋ).
+% [unzip-check Name P Xs LXs] unzips J(P), cleaned up as in j, and checks
+% Theorem 6.2 on it: U(J(P)) type-checks, and running f.nonlin(Xs ;) and then
+% f.lin(tape ; LXs) gives the results and the cost of J(P)(Xs ; LXs). Name
+% labels the checks.
 func unzip-check string, linA.prog, list linA.val, list linA.val.
 unzip-check Name P Xs LXs :-
   j P PJ, unzip.unzip-prog PJ PU, linB.to-linA PU A,
@@ -179,6 +195,8 @@ unzip-check Name P Xs LXs :-
   check {calc (Name ^ ": .nonlin then .lin computes J, with the same total cost")}
     (approx-list O' O, approx-list L' L, C is C1 + C2).
 
+% [unzip-tests] checks that U(J(sin1)) is the unzipped dsin of Figure 9, and
+% runs unzip-check on the examples.
 func unzip-tests.
 unzip-tests :-
   print "--- unzipping U (unzip.unzip-prog) ---",
@@ -192,21 +210,24 @@ unzip-tests :-
     [vtup [real 2.0, real 3.0]] [vtup [real 1.0, real 0.0]],
   example.k-prog K, unzip-check "k" K [real 3.0] [real 1.0].
 
-% Dot product of two lists of values of the same shapes.
+% [dot Xs Ys D] D is the dot product of the lists of values Xs and Ys, of the
+% same shapes.
 func dot list linA.val, list linA.val -> float.
 dot [] [] 0.0.
 dot [X|Xs] [Y|Ys] D :- dot1 X Y D1, dot Xs Ys D2, D is D1 + D2.
 
+% [dot1 X Y D] D is the dot product of the values X and Y, of the same shape.
 func dot1 linA.val, linA.val -> float.
 dot1 (real A) (real B) C :- C is A * B.
 dot1 (vtup Xs) (vtup Ys) C :- dot Xs Ys C.
 
-% Transpose U(C(J(P))), clean it up with C, and check Theorem 7.1 on it,
-% where ė is f.lin and ë is f.lin^T, both at the tape computed by
-% f.nonlin(x ;): T(U(C(J(P)))) type-checks, ⟨ẋ, ë[x; ÿ]⟩ = ⟨ė[x; ẋ], ÿ⟩,
-% and W[ë] + L_in ≤ W[ė] + L_out (L: the number of scalars in ẋ and in ÿ).
-% Also check that C after T type-checks, leaves no nested let or copy, and
-% gives the same results at the same cost.
+% [transpose-check Name P Xs DXs DYs] transposes U(C(J(P))), cleans it up with
+% C, and checks Theorem 7.1 on it, where ė is f.lin and ë is f.lin^T, both at
+% the tape computed by f.nonlin(Xs ;), ẋ is DXs and ÿ is DYs: T(U(C(J(P))))
+% type-checks, ⟨ẋ, ë[x; ÿ]⟩ = ⟨ė[x; ẋ], ÿ⟩, and W[ë] + L_in ≤ W[ė] + L_out
+% (L: the number of scalars in ẋ and in ÿ). It also checks that C after T
+% type-checks, leaves no nested let or copy, and gives the same results at the
+% same cost. Name labels the checks.
 func transpose-check string, linA.prog, list linA.val, list linA.val,
   list linA.val.
 transpose-check Name P Xs DXs DYs :-
@@ -233,6 +254,7 @@ transpose-check Name P Xs DXs DYs :-
   check {calc (Name ^ ": W[ë] + L_in ≤ W[ė] + L_out")}
     (A is CT + Lin, B is CL + Lout, A =< B).
 
+% [transpose-tests] runs transpose-check on the examples.
 func transpose-tests.
 transpose-tests :-
   print "--- transposition T (transpose.transpose-prog) ---",
@@ -248,12 +270,14 @@ transpose-tests :-
   example.k-prog K,
   transpose-check "k" K [real 3.0] [real 1.0] [real 2.0].
 
-% J followed by the two cleanup steps: what U, T and L start from.
+% [j P PN] PN is J(P) followed by the two cleanup steps, flatten and copyprop:
+% what U, T and L start from.
 func j linA.prog -> linA.prog.
 j P PN :-
   forward.dj-prog P PJ, flatten.flatten-prog PJ P1, copyprop.copyprop-prog P1 PN.
 
-% No let has a let, an unpacking let, or a copy as its bound expression.
+% [normal E] succeeds if no let in E has a let, an unpacking let, or a copy as
+% its bound expression.
 func normal linA.expr.
 normal (linA.let E B) :- !, not (nested-or-copy E), normal E, normal-nb B.
 normal (linA.unpack _ B) :- !, normal-nb B.
@@ -261,6 +285,8 @@ normal (linA.lunpack _ B) :- !, normal-lb B.
 normal (linA.drop E) :- !, normal E.
 normal _.
 
+% [nested-or-copy E] succeeds if E is a let, an unpacking let, or a copy (a ret
+% or a variable), which normal forbids as a bound expression.
 func nested-or-copy linA.expr.
 nested-or-copy (linA.let _ _).
 nested-or-copy (linA.unpack _ _).
@@ -269,28 +295,36 @@ nested-or-copy (linA.ret _ _).
 nested-or-copy (linA.nvar _).
 nested-or-copy (linA.lvar _).
 
+% [normal-nb B] succeeds if the body of the binder spine B is normal.
 func normal-nb linA.nbind linA.expr.
 normal-nb (linA.nb _ B) :- pi x\ normal-nb (B x).
 normal-nb (linA.nend L) :- normal-lb L.
 
+% [normal-lb B] succeeds if the body of the linear binder spine B is normal.
 func normal-lb linA.lbind linA.expr.
 normal-lb (linA.lb _ B) :- pi d\ normal-lb (B d).
 normal-lb (linA.lend E) :- normal E.
 
+% [normal-prog P] succeeds if the body of every definition of P is normal.
 func normal-prog linA.prog.
 normal-prog pnil.
 normal-prog (def D P) :- normal-def D, pi f\ normal-prog (P f).
 
+% [normal-def D] succeeds if the expression of the definition D is normal.
 func normal-def linA.nbind linA.fbody.
 normal-def (linA.nb _ B) :- pi x\ normal-def (B x).
 normal-def (linA.nend L) :- normal-ldef L.
 
+% [normal-ldef D] succeeds if the expression of D, a definition past its
+% non-linear parameters, is normal.
 func normal-ldef linA.lbind linA.fbody.
 normal-ldef (linA.lb _ B) :- pi d\ normal-ldef (B d).
 normal-ldef (linA.lend (linA.body _ _ E)) :- normal E.
 
-% flatten and copyprop on J(P): the result type-checks, has no nested let
-% and no copy left, and computes the same results as J(P) at the same cost.
+% [normalize-check Name P Xs LXs] runs flatten and copyprop on J(P) and checks
+% that the result type-checks, has no nested let and no copy left (normal-prog),
+% and computes the same results as J(P)(Xs ; LXs) at the same cost. Name labels
+% the checks.
 func normalize-check string, linA.prog, list linA.val, list linA.val.
 normalize-check Name P Xs LXs :-
   forward.dj-prog P PJ, j P PN,
@@ -301,6 +335,8 @@ normalize-check Name P Xs LXs :-
   check {calc (Name ^ ": same results, same cost")}
     (approx-list O' O, approx-list L' L, C = C').
 
+% [normalize-tests] runs normalize-check on the examples, and checks that the
+% cleanup of J(neg-sin) is Figure 6, right.
 func normalize-tests.
 normalize-tests :-
   print "--- flatten and copyprop, after J ---",
@@ -314,7 +350,7 @@ normalize-tests :-
     [vtup [real 2.0, real 3.0]] [vtup [real 1.0, real 0.0]],
   example.k-prog K, normalize-check "k" K [real 3.0] [real 1.0].
 
-% All the test groups.
+% [all] runs all the test groups.
 func all.
 all :-
   linA-tests, print "", forward-tests, print "", normalize-tests, print "",

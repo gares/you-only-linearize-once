@@ -24,12 +24,17 @@ namespace running {
 
 shorten linA.{ r, real, def, pnil }.
 
+% [step S] prints S as the title of a step, between blank lines.
 func step string.
 step S :- print "", print "==" S "==", print "".
 
+% [show-types P] type-checks the Linear A program P and says so; it fails if P
+% is ill-typed.
 func show-types linA.prog.
 show-types P :- lincheckA.of-prog P, print "(type-checks in Linear A)".
 
+% [show] prints the running example f(u) = −sin(u) after each of J, C, U, T, C
+% again and L, type-checks each step, and runs it at u = 0.5 with its cost.
 func show.
 show :-
   print "Running example: f(u) = −sin(u), at u = 0.5",

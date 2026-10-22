@@ -19,6 +19,8 @@ shorten linA.{
   nl, lin, nbind, lbind, nb, nend, lb, lend, expr, ret, let, unpack, lunpack,
   nvar, lvar, drop, prog, map-nb, map-lb, map-prog }.
 
+% [copyprop E R] R is E with every let whose bound expression is just
+% variables replaced by its body, the bound variables renamed.
 func copyprop expr -> expr.
 copyprop (let E B) R :- !, copyprop E E', let-copy E' B R.
 copyprop (unpack V B) (unpack V B') :- !, map-nb copyprop B B'.
@@ -26,38 +28,50 @@ copyprop (lunpack D B) (lunpack D B') :- !, map-lb copyprop B B'.
 copyprop (drop E) (drop E') :- !, copyprop E E'.
 copyprop E E.
 
-% let E in B: if E is a copy, substitute; otherwise keep the let.
+% [let-copy E B R] R is let E in B after copy propagation, with E already
+% propagated: if E is a copy (only variables), its variables are substituted
+% into B; otherwise the let is kept.
 func let-copy expr, nbind expr -> expr.
 let-copy (ret Vs Ls) B R :- !, inst-nb B Vs Ls E, copyprop E R.
 let-copy (nvar V) B R :- !, inst-nb B [V] [] E, copyprop E R.
 let-copy (lvar D) B R :- !, inst-nb B [] [D] E, copyprop E R.
 let-copy E B (let E B') :- map-nb copyprop B B'.
 
-% Instantiate the binders of a spine with the given variables.
+% [inst-nb B Vs Ls E] E is the body of the binder spine B, with its
+% non-linear binders instantiated with Vs and its linear ones with Ls.
 func inst-nb nbind expr, list nl, list lin -> expr.
 inst-nb (nb _ B) [V|Vs] Ls E :- inst-nb (B V) Vs Ls E.
 inst-nb (nend L) [] Ls E :- inst-lb L Ls E.
 
+% [inst-lb B Ds E] E is the body of the linear spine B, its binders
+% instantiated with Ds.
 func inst-lb lbind expr, list lin -> expr.
 inst-lb (lb _ B) [D|Ds] E :- inst-lb (B D) Ds E.
 inst-lb (lend E) [] E.
 
+% [copyprop-prog P P'] P' is P after copy propagation in every definition.
 func copyprop-prog prog -> prog.
 copyprop-prog P P' :- map-prog copyprop P P'.
 
 % --- Linear B ---------------------------------------------------------------------
 
+% [ncopyprop E R] R is the non-linear expression E after copy propagation, as
+% in copyprop.
 func ncopyprop linB.nexpr -> linB.nexpr.
 ncopyprop (linB.let E B) R :- !, ncopyprop E E', nlet-copy E' B R.
 ncopyprop (linB.unpack V B) (linB.unpack V B') :- !, linB.map-nabs ncopyprop B B'.
 ncopyprop (linB.drop E) (linB.drop E') :- !, ncopyprop E E'.
 ncopyprop E E.
 
+% [nlet-copy E B R] R is let E in B after copy propagation, in a non-linear
+% expression, as in let-copy.
 func nlet-copy linB.nexpr, linB.nabs linB.nexpr -> linB.nexpr.
 nlet-copy (linB.ret Vs) B R :- !, inst-nabs B Vs E, ncopyprop E R.
 nlet-copy (linB.leaf (nvar V)) B R :- !, inst-nabs B [V] E, ncopyprop E R.
 nlet-copy E B (linB.let E B') :- linB.map-nabs ncopyprop B B'.
 
+% [lcopyprop E R] R is the linear expression E after copy propagation, as in
+% copyprop.
 func lcopyprop linB.lexpr -> linB.lexpr.
 lcopyprop (linB.llet E B) R :- !, lcopyprop E E', llet-copy E' B R.
 lcopyprop (linB.nlet E B) R :- !, ncopyprop E E', nllet-copy E' B R.
@@ -66,24 +80,34 @@ lcopyprop (linB.nunpack V B) (linB.nunpack V B') :- !, linB.map-nabs lcopyprop B
 lcopyprop (linB.ldrop E) (linB.ldrop E') :- !, lcopyprop E E'.
 lcopyprop E E.
 
+% [llet-copy E B R] R is let (; …) = E in B after copy propagation, with E
+% linear, as in let-copy.
 func llet-copy linB.lexpr, linB.labs linB.lexpr -> linB.lexpr.
 llet-copy (linB.lret Ds) B R :- !, inst-labs B Ds E, lcopyprop E R.
 llet-copy (linB.lleaf (lvar D)) B R :- !, inst-labs B [D] E, lcopyprop E R.
 llet-copy E B (linB.llet E B') :- linB.map-labs lcopyprop B B'.
 
+% [nllet-copy E B R] R is let (… ;) = E in B after copy propagation, with E
+% non-linear and B linear, as in let-copy.
 func nllet-copy linB.nexpr, linB.nabs linB.lexpr -> linB.lexpr.
 nllet-copy (linB.ret Vs) B R :- !, inst-nabs B Vs E, lcopyprop E R.
 nllet-copy (linB.leaf (nvar V)) B R :- !, inst-nabs B [V] E, lcopyprop E R.
 nllet-copy E B (linB.nlet E B') :- linB.map-nabs lcopyprop B B'.
 
+% [inst-nabs B Vs E] E is the body of the non-linear binders B, instantiated
+% with Vs.
 func inst-nabs linB.nabs A, list nl -> A.
 inst-nabs (linB.nb _ B) [V|Vs] E :- inst-nabs (B V) Vs E.
 inst-nabs (linB.nend E) [] E.
 
+% [inst-labs B Ds E] E is the body of the linear binders B, instantiated
+% with Ds.
 func inst-labs linB.labs A, list lin -> A.
 inst-labs (linB.lb _ B) [D|Ds] E :- inst-labs (B D) Ds E.
 inst-labs (linB.lend E) [] E.
 
+% [copyprop-progB P P'] P' is the Linear B program P after copy propagation
+% in every definition.
 func copyprop-progB linB.prog -> linB.prog.
 copyprop-progB P P' :- linB.map-prog ncopyprop lcopyprop P P'.
 

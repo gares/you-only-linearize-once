@@ -27,102 +27,117 @@ shorten linA.{ sin, cos, exp, neg }.
 data mark.
 symb used mark.
 
+% [nlty X T M] the type T and usage mark M of the non-linear variable X
+% (loaded with ==> when X is bound)
 func nlty  nl  -> ty, mark.
+% [linty X T M] the type T and usage mark M of the linear variable X (loaded
+% with ==> when X is bound)
 func linty lin -> ty, mark.
+% [fnty F Ts LTs Ss LSs] the function F takes (Ts ; LTs) and returns
+% (Ss ; LSs) (loaded with ==> by of-prog after the definition of F)
 func fnty  fn  -> list ty, list ty, list ty, list ty.
 
+% [use-nl V T] V is a non-linear variable of type T in scope, and gets
+% marked as used (it may already be).
 func use-nl nl -> ty.
 use-nl V T :- nlty V T M, M = used.
 
+% [use-lin V T] V is a linear variable of type T in scope, not used yet, and
+% gets marked as used, so a second use fails.
 func use-lin lin -> ty.
 use-lin V T :- linty V T M, var M, M = used.
 
-% Bring the binders into scope, check their types against Ts (non-linear)
-% and LTs (linear), run K on the body, then check every bound variable was
-% used.
+% [of-nb B K Ts LTs] brings the binders of B into scope, checks their types
+% against Ts (non-linear) and LTs (linear), runs K on the body, then checks
+% that every bound variable was used.
 func of-nb nbind A, (func A) -> list ty, list ty.
 of-nb (nend L) K [] LTs :- of-lb L K LTs.
 of-nb (nb T B) K [T|Ts] LTs :-
   pi x\ nlty x T M ==> of-nb (B x) K Ts LTs, not (var M).
 
+% [of-lb B K Ts] like of-nb, for the linear spine B, whose binders have types
+% Ts.
 func of-lb lbind A, (func A) -> list ty.
 of-lb (lend X) K [] :- K X.
 of-lb (lb T B) K [T|Ts] :-
   pi x\ linty x T M ==> of-lb (B x) K Ts, not (var M).
 
+% [of E Ts LTs] E has type (Ts ; LTs), that is Γ ; Γ̇ ⊢ e : (τ ; τ̇) where Γ
+% and Γ̇ are the variables in scope. It marks the variables E uses.
 func of expr -> list ty, list ty.
 
-% TypeRet
-of (ret Vs LVs) Ts LTs :-
+of (ret Vs LVs) Ts LTs :- % TypeRet
   std.map Vs use-nl Ts, std.map LVs use-lin LTs.
 
-% TypeLet
-of (let E1 B) Ss LSs :-
+of (let E1 B) Ss LSs :- % TypeLet
   of E1 Ts LTs,
   of-nb B (e2\ of e2 Ss LSs) Ts LTs.
 
-% TypeUnpack
-of (unpack V B) Ss LSs :-
+of (unpack V B) Ss LSs :- % TypeUnpack
   use-nl V (tup Ts), of-nb B (e\ of e Ss LSs) Ts [].
 
-% TypeLinUnpack
-of (lunpack V B) Ss LSs :-
+of (lunpack V B) Ss LSs :- % TypeLinUnpack
   use-lin V (tup Ts), of-lb B (e\ of e Ss LSs) Ts.
 
-% TypeApp
-of (app F Vs LVs) Ss LSs :-
+of (app F Vs LVs) Ss LSs :- % TypeApp
   fnty F Ts LTs Ss LSs,
   std.map Vs use-nl Ts, std.map LVs use-lin LTs.
 
-% TypeVar
-of (nvar V) [T] [] :- use-nl V T.
+of (nvar V) [T] [] :- % TypeVar
+  use-nl V T.
 
-% TypeLit
-of (lit _) [r] [].
+of (lit _) [r] []. % TypeLit
 
-% TypePrim1
-of (sin V) [r] [] :- use-nl V r.
-of (cos V) [r] [] :- use-nl V r.
-of (exp V) [r] [] :- use-nl V r.
-of (neg V) [r] [] :- use-nl V r.
+of (sin V) [r] [] :- % TypePrim1
+  use-nl V r.
+of (cos V) [r] [] :- % TypePrim1
+  use-nl V r.
+of (exp V) [r] [] :- % TypePrim1
+  use-nl V r.
+of (neg V) [r] [] :- % TypePrim1
+  use-nl V r.
 
-% TypePrim2
-of (plus V1 V2) [r] [] :- use-nl V1 r, use-nl V2 r.
-of (mul  V1 V2) [r] [] :- use-nl V1 r, use-nl V2 r.
+of (plus V1 V2) [r] [] :- % TypePrim2
+  use-nl V1 r, use-nl V2 r.
+of (mul  V1 V2) [r] [] :- % TypePrim2
+  use-nl V1 r, use-nl V2 r.
 
-% TypeTup
-of (tuple Vs) [tup Ts] [] :- std.map Vs use-nl Ts.
+of (tuple Vs) [tup Ts] [] :- % TypeTup
+  std.map Vs use-nl Ts.
 
-% TypeLinTup
-of (ltuple Vs) [] [tup Ts] :- std.map Vs use-lin Ts.
+of (ltuple Vs) [] [tup Ts] :- % TypeLinTup
+  std.map Vs use-lin Ts.
 
-% TypeLinVar
-of (lvar V) [] [T] :- use-lin V T.
+of (lvar V) [] [T] :- % TypeLinVar
+  use-lin V T.
 
-% TypeLinZero
-of (lzero T) [] [T].
+of (lzero T) [] [T]. % TypeLinZero
 
-% TypeLinPlus
-of (lplus V1 V2) [] [T] :- use-lin V1 T, use-lin V2 T.
+of (lplus V1 V2) [] [T] :- % TypeLinPlus
+  use-lin V1 T, use-lin V2 T.
 
-% TypeLinMul
-of (lmul V1 V2) [] [T] :- use-nl V1 r, use-lin V2 T.
+of (lmul V1 V2) [] [T] :- % TypeLinMul
+  use-nl V1 r, use-lin V2 T.
 
-% TypeDup
-of (dup V) [] [T, T] :- use-lin V T.
+of (dup V) [] [T, T] :- % TypeDup
+  use-lin V T.
 
-% TypeDrop
-of (drop E) [] [] :- of E _ _.
+of (drop E) [] [] :- % TypeDrop
+  of E _ _.
 
-% TypeDef
+% [of-def D Ts LTs Ss LSs] the definition D takes (Ts ; LTs) and returns
+% (Ss ; LSs) (rule TypeDef).
 func of-def nbind fbody -> list ty, list ty, list ty, list ty.
-of-def D Ts LTs Ss LSs :-
+of-def D Ts LTs Ss LSs :- % TypeDef
   of-nb D (b\ of-body b Ss LSs) Ts LTs.
 
+% [of-body B Ss LSs] the expression of the definition body B has the return
+% types (Ss ; LSs) that B declares.
 func of-body fbody -> list ty, list ty.
 of-body (body Ss LSs E) Ss LSs :- of E Ss LSs.
 
-% Programs: check each definition, then bring its name into scope.
+% [of-prog P] every definition of P is well typed: each is checked, then its
+% name is brought into scope for the following ones.
 func of-prog prog.
 of-prog pnil.
 of-prog (def D P) :-

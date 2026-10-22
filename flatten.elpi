@@ -18,8 +18,8 @@ shorten linA.{
   nbind, lbind, expr, let, unpack, lunpack, drop, prog, map-nb, map-lb,
   map-prog }.
 
-% flatten E E': no let in E' has a let or an unpacking let as its bound
-% expression.
+% [flatten E E'] E' is E with its lets floated out: no let in E' has a let or
+% an unpacking let as its bound expression.
 func flatten expr -> expr.
 flatten (let E B) R :- !, flatten E E', map-nb flatten B B', float E' B' R.
 flatten (unpack V B) (unpack V B') :- !, map-nb flatten B B'.
@@ -27,18 +27,22 @@ flatten (lunpack D B) (lunpack D B') :- !, map-lb flatten B B'.
 flatten (drop E) (drop E') :- !, flatten E E'.
 flatten E E.
 
-% float E B: let E in B, with E already flat. If E binds variables and then
-% continues with a body b, the outer binders B move inside: the result is E
-% with its body b replaced by let b in B (floated again, in case b is a let).
+% [float E B R] R is let E in B, flattened, with E already flat. If E binds
+% variables and then continues with a body b, the outer binders B move
+% inside: R is E with its body b replaced by let b in B (floated again, in
+% case b is a let).
 func float expr, nbind expr -> expr.
 float (let E0 B0) B (let E0 B0') :- !, map-nb (float-into B) B0 B0'.
 float (unpack V B0) B (unpack V B0') :- !, map-nb (float-into B) B0 B0'.
 float (lunpack D B0) B (lunpack D B0') :- !, map-lb (float-into B) B0 B0'.
 float E B (let E B).
 
+% [float-into B E R] is float E B R, with the arguments in the order map-nb
+% needs.
 func float-into nbind expr, expr -> expr.
 float-into B E R :- float E B R.
 
+% [flatten-prog P P'] P' is P with the body of every definition flattened.
 func flatten-prog prog -> prog.
 flatten-prog P P' :- map-prog flatten P P'.
 
@@ -48,6 +52,8 @@ flatten-prog P P' :- map-prog flatten P P'.
 % any binding construct; a non-linear let in a linear expression (nlet) can
 % float out a non-linear let or unpack, which become nlet and nunpack.
 
+% [nflatten E E'] E' is the non-linear expression E with its lets floated
+% out, as in flatten.
 func nflatten linB.nexpr -> linB.nexpr.
 nflatten (linB.let E B) R :- !,
   nflatten E E', linB.map-nabs nflatten B B', nfloat E' B' R.
@@ -55,16 +61,21 @@ nflatten (linB.unpack V B) (linB.unpack V B') :- !, linB.map-nabs nflatten B B'.
 nflatten (linB.drop E) (linB.drop E') :- !, nflatten E E'.
 nflatten E E.
 
-% nfloat E B: let E in B, in a non-linear expression.
+% [nfloat E B R] R is let E in B, flattened, in a non-linear expression, as
+% in float.
 func nfloat linB.nexpr, linB.nabs linB.nexpr -> linB.nexpr.
 nfloat (linB.let E0 B0) B (linB.let E0 B0') :- !, linB.map-nabs (nfloat-into B) B0 B0'.
 nfloat (linB.unpack V B0) B (linB.unpack V B0') :- !,
   linB.map-nabs (nfloat-into B) B0 B0'.
 nfloat E B (linB.let E B).
 
+% [nfloat-into B E R] is nfloat E B R, with the arguments in the order
+% linB.map-nabs needs.
 func nfloat-into linB.nabs linB.nexpr, linB.nexpr -> linB.nexpr.
 nfloat-into B E R :- nfloat E B R.
 
+% [lflatten E E'] E' is the linear expression E with its lets (linear and
+% non-linear) floated out, as in flatten.
 func lflatten linB.lexpr -> linB.lexpr.
 lflatten (linB.llet E B) R :- !,
   lflatten E E', linB.map-labs lflatten B B', lfloat E' B' R.
@@ -75,7 +86,7 @@ lflatten (linB.nunpack V B) (linB.nunpack V B') :- !, linB.map-nabs lflatten B B
 lflatten (linB.ldrop E) (linB.ldrop E') :- !, lflatten E E'.
 lflatten E E.
 
-% lfloat E B: let (; …) = E in B, with E linear.
+% [lfloat E B R] R is let (; …) = E in B, flattened, with E linear.
 func lfloat linB.lexpr, linB.labs linB.lexpr -> linB.lexpr.
 lfloat (linB.llet E0 B0) B (linB.llet E0 B0') :- !,
   linB.map-labs (lfloat-into B) B0 B0'.
@@ -87,10 +98,13 @@ lfloat (linB.nunpack V B0) B (linB.nunpack V B0') :- !,
   linB.map-nabs (lfloat-into B) B0 B0'.
 lfloat E B (linB.llet E B).
 
+% [lfloat-into B E R] is lfloat E B R, with the arguments in the order the
+% map functions need.
 func lfloat-into linB.labs linB.lexpr, linB.lexpr -> linB.lexpr.
 lfloat-into B E R :- lfloat E B R.
 
-% nlfloat E B: let (… ;) = E in B, with E non-linear and B linear.
+% [nlfloat E B R] R is let (… ;) = E in B, flattened, with E non-linear and
+% B linear; the lets and unpacks floated out of E become nlet and nunpack.
 func nlfloat linB.nexpr, linB.nabs linB.lexpr -> linB.lexpr.
 nlfloat (linB.let E0 B0) B (linB.nlet E0 B0') :- !,
   linB.map-nabs (nlfloat-into B) B0 B0'.
@@ -98,9 +112,13 @@ nlfloat (linB.unpack V B0) B (linB.nunpack V B0') :- !,
   linB.map-nabs (nlfloat-into B) B0 B0'.
 nlfloat E B (linB.nlet E B).
 
+% [nlfloat-into B E R] is nlfloat E B R, with the arguments in the order
+% linB.map-nabs needs.
 func nlfloat-into linB.nabs linB.lexpr, linB.nexpr -> linB.lexpr.
 nlfloat-into B E R :- nlfloat E B R.
 
+% [flatten-progB P P'] P' is the Linear B program P with every definition
+% flattened.
 func flatten-progB linB.prog -> linB.prog.
 flatten-progB P P' :- linB.map-prog nflatten lflatten P P'.
 

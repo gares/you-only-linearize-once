@@ -71,24 +71,30 @@ symb pnil prog.
 
 % --- Maps under binders -------------------------------------------------------
 
-% Apply K to the body of a binder spine, keeping the binders. K may change
-% the type of the body.
+% [map-nabs K B B'] B' is the non-linear spine B, with the same binders and K
+% applied to its body. K may change the type of the body.
 func map-nabs (func A -> C), nabs A -> nabs C.
 map-nabs K (nb T B) (nb T B') :- pi x\ map-nabs K (B x) (B' x).
 map-nabs K (nend X) (nend X') :- K X X'.
 
+% [map-labs K B B'] B' is the linear spine B, with the same binders and K
+% applied to its body. K may change the type of the body.
 func map-labs (func A -> C), labs A -> labs C.
 map-labs K (lb T B) (lb T B') :- pi d\ map-labs K (B d) (B' d).
 map-labs K (lend X) (lend X') :- K X X'.
 
+% [map-nbody K B B'] B' is the non-linear function body B, with K applied to
+% its expression.
 func map-nbody (func nexpr -> nexpr), nfbody -> nfbody.
 map-nbody K (nbody Ss E) (nbody Ss E') :- K E E'.
 
+% [map-lbody K B B'] B' is the linear function body B, with K applied to its
+% expression.
 func map-lbody (func lexpr -> lexpr), lfbody -> lfbody.
 map-lbody K (lbody Ss E) (lbody Ss E') :- K E E'.
 
-% Apply KN to the body of every non-linear function, and KL to the body of
-% every linear one.
+% [map-prog KN KL P P'] P' is the program P, with KN applied to the body of
+% every non-linear function, and KL to the body of every linear one.
 func map-prog (func nexpr -> nexpr), (func lexpr -> lexpr), prog -> prog.
 map-prog _ _ pnil pnil.
 map-prog KN KL (ndef D P) (ndef D' P') :-
@@ -103,9 +109,15 @@ map-prog KN KL (ldef D P) (ldef D' P') :-
 % type-checked with lincheckA.of-prog, run with evalA.run, and printed with
 % ppA.prog->string.
 
+% [nfn->A F G] the Linear A name G of the non-linear function F (loaded with
+% ==> by to-linA when F is bound)
 func nfn->A nfn -> linA.fn.
+% [lfn->A F G] the Linear A name G of the linear function F (loaded with ==>
+% by to-linA when F is bound)
 func lfn->A lfn -> linA.fn.
 
+% [nleaf E] E is a non-linear leaf of Linear A: a variable, a literal, ⊗(v)
+% or a primitive.
 func nleaf linA.expr.
 nleaf (linA.nvar _).
 nleaf (linA.lit _).
@@ -117,6 +129,8 @@ nleaf (linA.neg _).
 nleaf (linA.plus _ _).
 nleaf (linA.mul _ _).
 
+% [lleaf? E] E is a linear leaf of Linear A: v̇, 0̇, ⊗(v̇), v̇ + v̇, v * v̇ or
+% dup(v̇).
 func lleaf? linA.expr.
 lleaf? (linA.lvar _).
 lleaf? (linA.lzero _).
@@ -125,15 +139,20 @@ lleaf? (linA.lplus _ _).
 lleaf? (linA.lmul _ _).
 lleaf? (linA.dup _).
 
-% Spines: K turns the body into what follows the binders.
+% [nabs->A K B B'] B' is the Linear A spine with the non-linear binders of B,
+% and K turns the body of B into the linear spine that follows them.
 func nabs->A (func A -> linA.lbind B), nabs A -> linA.nbind B.
 nabs->A K (nb T B) (linA.nb T B') :- pi x\ nabs->A K (B x) (B' x).
 nabs->A K (nend X) (linA.nend L) :- K X L.
 
+% [labs->A K B B'] B' is the Linear A linear spine with the binders of B, and
+% K turns the body of B into the body of B'.
 func labs->A (func A -> B), labs A -> linA.lbind B.
 labs->A K (lb T B) (linA.lb T B') :- pi d\ labs->A K (B d) (B' d).
 labs->A K (lend X) (linA.lend Y) :- K X Y.
 
+% [nexpr->A E E'] E' is the Linear A expression for E, with no linear
+% results. It fails if a leaf of E is not a non-linear leaf.
 func nexpr->A nexpr -> linA.expr.
 nexpr->A (ret Vs) (linA.ret Vs []).
 nexpr->A (let E B) (linA.let E' B') :- nexpr->A E E', nabs->A nexpr-lend B B'.
@@ -142,9 +161,13 @@ nexpr->A (app F Vs) (linA.app F' Vs []) :- nfn->A F F'.
 nexpr->A (drop E) (linA.drop E') :- nexpr->A E E'.
 nexpr->A (leaf E) E :- nleaf E.
 
+% [nexpr-lend E L] L ends a Linear A spine that has no linear binders with
+% the Linear A expression for E.
 func nexpr-lend nexpr -> linA.lbind linA.expr.
 nexpr-lend E (linA.lend E') :- nexpr->A E E'.
 
+% [lexpr->A E E'] E' is the Linear A expression for E, with no non-linear
+% results. It fails if a leaf of E is not a linear leaf.
 func lexpr->A lexpr -> linA.expr.
 lexpr->A (lret Ls) (linA.ret [] Ls).
 lexpr->A (llet E B) (linA.let E' (linA.nend B')) :-
@@ -156,15 +179,23 @@ lexpr->A (lapp F Vs Ls) (linA.app F' Vs Ls) :- lfn->A F F'.
 lexpr->A (ldrop E) (linA.drop E') :- lexpr->A E E'.
 lexpr->A (lleaf E) E :- lleaf? E.
 
+% [lexpr-lend E L] L ends a Linear A spine that has no linear binders with
+% the Linear A expression for E.
 func lexpr-lend lexpr -> linA.lbind linA.expr.
 lexpr-lend E (linA.lend E') :- lexpr->A E E'.
 
+% [nbody-lend B L] L ends a Linear A spine that has no linear binders with
+% the Linear A body for the non-linear function body B (no linear results).
 func nbody-lend nfbody -> linA.lbind linA.fbody.
 nbody-lend (nbody Ts E) (linA.lend (linA.body Ts [] E')) :- nexpr->A E E'.
 
+% [lbody->A B B'] B' is the Linear A body for the linear function body B (no
+% non-linear results).
 func lbody->A lfbody -> linA.fbody.
 lbody->A (lbody Ts E) (linA.body [] Ts E') :- lexpr->A E E'.
 
+% [to-linA P P'] P' is the Linear A program for the Linear B program P. It
+% fails if P has a leaf of the wrong kind.
 func to-linA prog -> linA.prog.
 to-linA pnil linA.pnil.
 to-linA (ndef D P) (linA.def D' P') :-

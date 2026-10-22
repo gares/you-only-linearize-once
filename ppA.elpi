@@ -21,33 +21,48 @@ shorten linA.{ sin, cos, exp, neg }.
 % f, g, h, ... in program order. Output is a list of lines; the *-string
 % predicates join them with newlines.
 
+% [nlname X S] S is the name of the non-linear variable X, loaded in the context
+% when X is bound.
 func nlname  nl  -> string.
+% [linname X S] S is the name of the linear variable X, loaded in the context
+% when X is bound.
 func linname lin -> string.
+% [fnname F S] S is the name of the function F, loaded in the context when F is
+% bound.
 func fnname  fn  -> string.
 
+% [var-name N S] S is the name of the binder at depth N: a letter of
+% "acemnopqrsuvwxyz", suffixed by N div 16 when it is not 0.
 func var-name int -> string.
 var-name N S :-
   Alphabet = "acemnopqrsuvwxyz",
   L is substring Alphabet (N mod 16) 1, K is N div 16, add-suffix L K S.
 
+% [fn-name N S] S is the name of the N-th function: f, g, h, then f1, g1, h1,
+% and so on.
 func fn-name int -> string.
 fn-name N S :- L is substring "fgh" (N mod 3) 1, K is N div 3, add-suffix L K S.
 
+% [add-suffix L K S] S is L followed by the number K, or L itself when K is 0.
 func add-suffix string, int -> string.
 add-suffix L 0 L :- !.
 add-suffix L K S :- S is L ^ int_to_string K.
 
+% [dotted X S] S is X with a combining dot, the name of a linear variable.
 func dotted string -> string.
 dotted X S :- S is X ^ "̇".
 
+% [pp-ty T S] S prints the type T: R, or ⊗(…) for a tuple.
 func pp-ty ty -> string.
 pp-ty r "R".
 pp-ty (tup Ts) S :- std.map Ts pp-ty Ss, pp-tensor Ss S.
 
+% [pp-tensor Ss S] S is ⊗(…) around the strings Ss, separated by commas.
 func pp-tensor list string -> string.
 pp-tensor Ss S :- std.string.concat ", " Ss J, S is "⊗(" ^ J ^ ")".
 
-% (a, b ; ċ), (; ċ), (a ;), (;)
+% [pp-split Ns Ls S] S pairs the non-linear items Ns and the linear items Ls as
+% (a, b ; ċ), omitting an empty side: (; ċ), (a ;), (;).
 func pp-split list string, list string -> string.
 pp-split [] [] "(;)" :- !.
 pp-split [] Ls S :- !, std.string.concat ", " Ls B, S is "(; " ^ B ^ ")".
@@ -56,14 +71,18 @@ pp-split Ns Ls S :-
   std.string.concat ", " Ns A, std.string.concat ", " Ls B,
   S is "(" ^ A ^ " ; " ^ B ^ ")".
 
+% [pp-decl X T S] S is the declaration X : T.
 func pp-decl string, string -> string.
 pp-decl X T S :- S is X ^ " : " ^ T.
 
+% [indent Ls Is] Is is the lines Ls, each indented by two spaces.
 func indent list string -> list string.
 indent Ls Is :- std.map Ls (l\ i\ i is "  " ^ l) Is.
 
-% Name the binders of a spine (starting at depth N), then print the body
-% with K. Returns the names and types of the non-linear and linear binders.
+% [pp-nb B N K Xs Ts LXs LTs Body] names the binders of the spine B from depth
+% N, then prints the body of B with K, at the depth past the binders, into the
+% lines Body. Xs and Ts are the names and types of the non-linear binders, LXs
+% and LTs those of the linear ones.
 func pp-nb nbind A, int, (func A, int -> list string)
   -> list string, list string, list string, list string, list string.
 pp-nb (nend L) N K [] [] LXs LTs Body :- pp-lb L N K LXs LTs Body.
@@ -71,6 +90,8 @@ pp-nb (nb T B) N K [X|Xs] [TS|Ts] LXs LTs Body :-
   var-name N X, pp-ty T TS, N1 is N + 1,
   pi x\ nlname x X ==> pp-nb (B x) N1 K Xs Ts LXs LTs Body.
 
+% [pp-lb B N K Xs Ts Body] is pp-nb for a spine B of linear binders: Xs and Ts
+% are their names and types.
 func pp-lb lbind A, int, (func A, int -> list string)
   -> list string, list string, list string.
 pp-lb (lend E) N K [] [] Body :- K E N Body.
@@ -78,13 +99,15 @@ pp-lb (lb T B) N K [X|Xs] [TS|Ts] Body :-
   var-name N X0, dotted X0 X, pp-ty T TS, N1 is N + 1,
   pi x\ linname x X ==> pp-lb (B x) N1 K Xs Ts Body.
 
-% let HEAD = E in, on one line if E fits on one line.
+% [pp-let Head E Body Lines] Lines is let Head = E in, followed by Body; E is on
+% the same line when it is one line, indented otherwise.
 func pp-let string, list string, list string -> list string.
 pp-let Head [One] Body [L|Body] :- !, L is "let " ^ Head ^ " = " ^ One ^ " in".
 pp-let Head E Body Lines :-
   L is "let " ^ Head ^ " =", indent E IE,
   std.append [L|IE] ["in"|Body] Lines.
 
+% [pp E N Lines] Lines print the expression E, naming its binders from depth N.
 func pp expr, int -> list string.
 pp (let E B) N Lines :-
   !, pp-nb B N pp Xs Ts LXs LTs Body,
@@ -105,10 +128,12 @@ pp (lunpack V B) N Lines :-
 pp (drop E) N Lines :- !, pp E N L, pp-drop L Lines.
 pp E _ [S] :- pp-atom E S.
 
+% [pp-drop L Lines] Lines print drop(L), on one line when L is one line.
 func pp-drop list string -> list string.
 pp-drop [One] [S] :- !, S is "drop(" ^ One ^ ")".
 pp-drop L Lines :- indent L IL, std.append ["drop("|IL] [")"] Lines.
 
+% [pp-atom E S] S prints the expression E, which binds no variable, on one line.
 func pp-atom expr -> string.
 pp-atom (ret Vs LVs) S :-
   std.map Vs nlname Xs, std.map LVs linname LXs, pp-split Xs LXs S.
@@ -118,7 +143,8 @@ pp-atom (app F Vs LVs) S :-
 pp-atom (nvar V) S :- nlname V S.
 pp-atom (lit F) S :- S0 is real_to_string F, pp-float S0 S.
 
-% OCaml prints 2.0 as "2."; add the trailing 0.
+% [pp-float S S'] S' is the printed float S with a trailing 0 when S ends with a
+% dot: OCaml prints 2.0 as "2.".
 func pp-float string -> string.
 pp-float S S' :- N is size S, N > 0, M is N - 1, "." is substring S M 1, !,
   S' is S ^ "0".
@@ -137,14 +163,16 @@ pp-atom (lplus V1 V2) S :- linname V1 X, linname V2 Y, S is X ^ " + " ^ Y.
 pp-atom (lmul V1 V2) S :- nlname V1 X, linname V2 Y, S is X ^ " * " ^ Y.
 pp-atom (dup V) S :- linname V X, S is "dup(" ^ X ^ ")".
 
-% def f(a : R ; ḃ : R) → (R ; R) =
-%   body
-% The continuation puts the return types first, so the header can use them.
+% [pp-body B N Lines] Lines are the return types of B, as (σ ; τ̇), then the
+% lines of its expression, named from depth N. The return types come first so
+% that pp-def can put them in the header.
 func pp-body fbody, int -> list string.
 pp-body (body Ss LSs E) N [R|Lines] :-
   std.map Ss pp-ty STs, std.map LSs pp-ty LSTs, pp-split STs LSTs R,
   pp E N Lines.
 
+% [pp-def D Fn Lines] Lines print D as the definition of Fn: a header
+% def Fn(a : R ; ḃ : R) → (R ; R) =, then the body, indented.
 func pp-def nbind fbody, string -> list string.
 pp-def D Fn [Hd|Body] :-
   pp-nb D 0 pp-body Xs Ts LXs LTs [R|Lines],
@@ -153,7 +181,8 @@ pp-def D Fn [Hd|Body] :-
   Hd is "def " ^ Fn ^ Args ^ " → " ^ R ^ " =",
   indent Lines Body.
 
-% Definitions in order, separated by a blank line.
+% [pp-prog P K Lines] Lines print the definitions of P in order, separated by a
+% blank line, the first one named with fn-name K.
 func pp-prog prog, int -> list string.
 pp-prog pnil _ [].
 pp-prog (def D P) K Lines :-
@@ -161,16 +190,22 @@ pp-prog (def D P) K Lines :-
   (pi f\ fnname f Fn ==> pp-prog (P f) K1 L2),
   pp-sep L1 L2 Lines.
 
+% [pp-sep L1 L2 Lines] Lines is L1, then a blank line and L2 when L2 is not
+% empty.
 func pp-sep list string, list string -> list string.
 pp-sep L1 [] L1 :- !.
 pp-sep L1 L2 Lines :- std.append L1 [""|L2] Lines.
 
+% [expr->string E S] S prints E, its lines joined by newlines.
 func expr->string expr -> string.
 expr->string E S :- pp E 0 L, std.string.concat "\n" L S.
 
+% [def->string D S] S prints D as the definition of f, its lines joined by
+% newlines.
 func def->string nbind fbody -> string.
 def->string D S :- pp-def D "f" L, std.string.concat "\n" L S.
 
+% [prog->string P S] S prints the program P, its lines joined by newlines.
 func prog->string prog -> string.
 prog->string P S :- pp-prog P 0 L, std.string.concat "\n" L S.
 

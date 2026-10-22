@@ -72,7 +72,8 @@ symb pnil prog.
 
 % --- Free non-linear variables (used by J and U) -------------------------------
 
-% occ E Vs: the non-linear variables occurring free in E, with repetitions.
+% [occ E L] L lists the non-linear variables occurring free in E, with
+% repetitions.
 func occ expr -> list nl.
 occ (ret Vs _) Vs.
 occ (let E B) L :- occ E L1, occ-nb B L2, std.append L1 L2 L.
@@ -96,49 +97,65 @@ occ (lmul V _) [V].
 occ (dup _) [].
 occ (drop E) L :- occ E L.
 
+% [occ-nb B L] L lists the non-linear variables occurring free in the binder
+% spine B, with repetitions.
 func occ-nb nbind expr -> list nl.
 occ-nb (nb _ B) L :- pi x\ occ-under x (B x) L.
 occ-nb (nend LB) L :- occ-lb LB L.
 
-% Called under pi x, so L0 may mention x before x is filtered out.
+% [occ-under X B L] L is what occ-nb gives for B, without X. It is called
+% under pi x, so the variables of B may mention X before X is filtered out.
 func occ-under nl, nbind expr -> list nl.
 occ-under X B L :- occ-nb B L0, std.filter L0 (y\ not (y = X)) L.
 
+% [occ-lb B L] L lists the non-linear variables occurring free in the body of
+% the linear spine B, with repetitions.
 func occ-lb lbind expr -> list nl.
 occ-lb (lb _ B) L :- pi x\ occ-lb (B x) L.
 occ-lb (lend E) L :- occ E L.
 
-% Remove duplicates, keeping the first occurrence.
+% [uniq L R] R is L without duplicates, keeping the first occurrence of each.
 func uniq list nl -> list nl.
 uniq L R :- uniq-acc L [] R.
 
+% [uniq-acc L Acc R] R is the reverse of Acc followed by the elements of L
+% not seen before (in Acc or earlier in L).
 func uniq-acc list nl, list nl -> list nl.
 uniq-acc [] Acc R :- std.rev Acc R.
 uniq-acc [X|Xs] Acc R :- std.mem! Acc X, !, uniq-acc Xs Acc R.
 uniq-acc [X|Xs] Acc R :- uniq-acc Xs [X|Acc] R.
 
+% [fv E L] L lists the non-linear variables free in E, without duplicates, in
+% order of first occurrence.
 func fv expr -> list nl.
 fv E L :- occ E L0, uniq L0 L.
 
+% [fv-nb B L] L lists the non-linear variables free in the binder spine B,
+% without duplicates, in order of first occurrence.
 func fv-nb nbind expr -> list nl.
 fv-nb B L :- occ-nb B L0, uniq L0 L.
 
 % --- Maps under binders ----------------------------------------------------------
 
-% Apply K to the body of a binder spine, keeping the binders.
+% [map-nb K B B'] B' is the binder spine B, with the same binders and K
+% applied to its body.
 func map-nb (func A -> A), nbind A -> nbind A.
 map-nb K (nb T B) (nb T B') :- pi x\ map-nb K (B x) (B' x).
 map-nb K (nend L) (nend L') :- map-lb K L L'.
 
+% [map-lb K B B'] B' is the linear spine B, with the same binders and K
+% applied to its body.
 func map-lb (func A -> A), lbind A -> lbind A.
 map-lb K (lb T B) (lb T B') :- pi d\ map-lb K (B d) (B' d).
 map-lb K (lend X) (lend X') :- K X X'.
 
-% Apply K to the body expression of a definition.
+% [map-body K B B'] B' is the definition body B, with K applied to its
+% expression.
 func map-body (func expr -> expr), fbody -> fbody.
 map-body K (body Ss LSs E) (body Ss LSs E') :- K E E'.
 
-% Apply K to the body expression of every definition of a program.
+% [map-prog K P P'] P' is the program P, with K applied to the body
+% expression of every definition.
 func map-prog (func expr -> expr), prog -> prog.
 map-prog _ pnil pnil.
 map-prog K (def D P) (def D' P') :-
@@ -146,8 +163,9 @@ map-prog K (def D P) (def D' P') :-
 
 % --- Programs ------------------------------------------------------------------
 
-% Drop the last definition of a program. Used to run the f.nonlin of an
-% unzipped program: dropping its f.lin makes f.nonlin the entry point.
+% [drop-last P P'] P' is P without its last definition. Used to run the
+% f.nonlin of an unzipped program: dropping its f.lin makes f.nonlin the
+% entry point.
 func drop-last prog -> prog.
 drop-last (def _ (x\ pnil)) pnil :- !.
 drop-last (def D P) (def D P') :- pi f\ drop-last (P f) (P' f).

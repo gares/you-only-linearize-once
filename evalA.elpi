@@ -15,10 +15,9 @@ shorten linA.{
   lzero, ltuple, lplus, lmul, dup, drop, fbody, body, prog, def, pnil }.
 
 %
-% Big-step evaluation: eval E Vs LVs C computes the non-linear results Vs,
-% the linear results LVs, and the cost C of E. Linear values are ordinary
-% values: linearity only matters to the type checker. Variables are bound
-% to values by hypothetical clauses, function names to their definitions.
+% Big-step evaluation (see eval). Linear values are ordinary values:
+% linearity only matters to the type checker. Variables are bound to values
+% by hypothetical clauses, function names to their definitions.
 %
 % Cost model (Section 4.3):
 % - every non-linear primitive (sin, cos, exp, −, +, *) costs 1;
@@ -29,45 +28,60 @@ shorten linA.{
 %   the body;
 % - everything else (variables, literals, tuples, unpacking, 0̇, dup) is free.
 
+% [nlval X V] the value V of the non-linear variable X (loaded with ==> when
+% X is bound)
 func nlval  nl  -> val.
+% [linval X V] the value V of the linear variable X (loaded with ==> when X
+% is bound)
 func linval lin -> val.
+% [fndef F D] the definition D of the function F (loaded with ==> by run
+% after the definition of F)
 func fndef  fn  -> nbind fbody.
 
-% Bind the variables of a binder spine to values, then run K on the body.
+% [bind-nb B Xs LXs K Out LOut C] binds the non-linear binders of B to the
+% values Xs and its linear binders to LXs, then runs K on the body, which
+% gives the results Out ; LOut at cost C.
 func bind-nb nbind A, list val, list val, (func A -> list val, list val, int)
   -> list val, list val, int.
 bind-nb (nend L) [] LXs K Out LOut C :- bind-lb L LXs K Out LOut C.
 bind-nb (nb _ B) [X|Xs] LXs K Out LOut C :-
   pi x\ nlval x X ==> bind-nb (B x) Xs LXs K Out LOut C.
 
+% [bind-lb B Xs K Out LOut C] like bind-nb, for the linear spine B, whose
+% binders get the values Xs.
 func bind-lb lbind A, list val, (func A -> list val, list val, int)
   -> list val, list val, int.
 bind-lb (lend E) [] K Out LOut C :- K E Out LOut C.
 bind-lb (lb _ B) [X|Xs] K Out LOut C :-
   pi x\ linval x X ==> bind-lb (B x) Xs K Out LOut C.
 
-% Arithmetic on values: zero of a type, addition, scaling by a real.
+% [zero T X] X is the zero value of type T.
 func zero ty -> val.
 zero r (real 0.0).
 zero (tup Ts) (vtup Xs) :- std.map Ts zero Xs.
 
+% [vplus X Y Z] Z is the sum of the values X and Y, componentwise.
 func vplus val, val -> val.
 vplus (real A) (real B) (real C) :- C is A + B.
 vplus (vtup Xs) (vtup Ys) (vtup Zs) :- std.map2 Xs Ys vplus Zs.
 
+% [vscale A X Y] Y is the value X scaled by the real A, componentwise.
 func vscale float, val -> val.
 vscale A (real B) (real C) :- C is A * B.
 vscale A (vtup Xs) (vtup Ys) :- std.map Xs (vscale A) Ys.
 
-% Number of real scalars in a value, or in a list of values.
+% [scalars X N] N is the number of real scalars in the value X.
 func scalars val -> int.
 scalars (real _) 1.
 scalars (vtup Xs) N :- scalars-list Xs N.
 
+% [scalars-list Xs N] N is the number of real scalars in the values Xs.
 func scalars-list list val -> int.
 scalars-list [] 0.
 scalars-list [X|Xs] N :- scalars X N1, scalars-list Xs N2, N is N1 + N2.
 
+% [eval E Xs LXs C] evaluates E (big-step) to the non-linear results Xs and
+% the linear results LXs, at cost C (see the cost model above).
 func eval expr -> list val, list val, int.
 eval (ret Vs LVs) Xs LXs 0 :- std.map Vs nlval Xs, std.map LVs linval LXs.
 eval (let E B) Out LOut C :-
@@ -101,18 +115,22 @@ eval (dup V) [] [X, X] 0 :- linval V X.
 eval (drop E) [] [] C :-
   eval E Xs LXs C1, std.append Xs LXs Ys, scalars-list Ys N, C is C1 + N.
 
+% [eval-body B Out LOut C] evaluates the expression of the definition body B
+% to Out ; LOut at cost C.
 func eval-body fbody -> list val, list val, int.
 eval-body (body _ _ E) Out LOut C :- eval E Out LOut C.
 
-% Run a program: its last definition is the entry point, called on the
-% non-linear arguments Xs and linear arguments LXs. C is the cost.
+% [run P Xs LXs Out LOut C] runs the program P: its last definition is the
+% entry point, called on the non-linear arguments Xs and linear arguments
+% LXs. It returns Out ; LOut at cost C.
 func run prog, list val, list val -> list val, list val, int.
 run (def D (x\ pnil)) Xs LXs Out LOut C :- !,
   bind-nb D Xs LXs eval-body Out LOut C.
 run (def D P) Xs LXs Out LOut C :-
   pi f\ fndef f D ==> run (P f) Xs LXs Out LOut C.
 
-% Run a single definition as a one-function program.
+% [run-def D Xs LXs Out LOut C] runs the single definition D as a
+% one-function program, like run.
 func run-def nbind fbody, list val, list val -> list val, list val, int.
 run-def D Xs LXs Out LOut C :- run (def D x\ pnil) Xs LXs Out LOut C.
 

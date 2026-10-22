@@ -14,51 +14,29 @@ shorten linB.{
   lexpr, nabs, labs, nb, nend, lb, lend, lret, llet, nlet, lunpack, nunpack,
   lapp, ldrop, lleaf, lfbody, lbody, ndef, ldef, pnil, prog, lfn }.
 
-% transpose E Dd Cs E' is T(Δ̇, Δ̈ | ė) ⇝ ë:
-% - Dd = Δ̇ lists the linear variables E consumes, with their types, in the
-%   order in which E' returns their cotangents;
-% - Cs = Δ̈ lists one cotangent variable per result of E, in order;
-% - E' reads Cs (and E's non-linear variables) and returns the cotangents.
-% E' never mentions E's linear variables: they only fix positions. Where a
-% rule's results come out in another order than Dd, they are let-bound and
-% returned in Dd's order (a shuffle; it costs nothing).
-
-func trfn lfn -> lfn.   % f.lin ↦ f.lin^T
+% [trfn F FT] FT is f.lin^T, the transpose of the linear function F = f.lin.
+% Its clauses are loaded in the context by transpose-prog.
+func trfn lfn -> lfn.
 
 % --- Helpers -------------------------------------------------------------------
 
-func pair-fst pair A B -> A.
-pair-fst (pr A _) A.
+% [cot-of KVs P V] V is the cotangent of the variable of P, given the
+% pairs variable ↦ cotangent in KVs.
+func cot-of list (pair lin lin), pair lin ty -> lin.
+cot-of KVs (pr K _) V :- std.lookup! KVs K V.
 
-func pair-snd pair A B -> B.
-pair-snd (pr _ B) B.
-
-% assoc Keys Vals K V: V is at the position of K in Keys.
-func assoc list lin, list lin, lin -> lin.
-assoc [K|_] [V|_] K V :- !.
-assoc [_|Ks] [_|Vs] K V :- assoc Ks Vs K V.
-
-% The cotangent of the variable of P, given Keys ↦ Vals.
-func cot-of list lin, list lin, pair lin ty -> lin.
-cot-of Keys Vals (pr K _) V :- assoc Keys Vals K V.
-
-% The type of linear variable D, from Dd.
-func type-in list (pair lin ty), lin -> ty.
-type-in [pr D T|_] D T :- !.
-type-in [_|Dd] D T :- type-in Dd D T.
-
+% [in-list L P] the variable of P is in L.
 func in-list list lin, pair lin ty.
 in-list L (pr D _) :- std.mem! L D.
 
-func not-in-list list lin, pair lin ty.
-not-in-list L (pr D _) :- not (std.mem! L D).
-
-% Bind fresh cotangent variables of types Ts, then build the body with K.
+% [cot-spine Ts Acc K B] B binds fresh cotangent variables of types Ts
+% around the body K builds from all the bound variables Cs, in order. Acc
+% holds the variables bound so far, reversed.
 func cot-spine list ty, list lin, (func list lin -> A) -> labs A.
 cot-spine [] Acc K (lend X) :- std.rev Acc Cs, K Cs X.
 cot-spine [T|Ts] Acc K (lb T B) :- pi c\ cot-spine Ts [c|Acc] K (B c).
 
-% Linear variables read by a linear expression.
+% [lin-occ E L] L lists the free linear variables that E reads.
 func lin-occ lexpr -> list lin.
 lin-occ (lret Ds) Ds.
 lin-occ (llet E B) L :- lin-occ E L1, labs-lin-occ B L2, std.append L1 L2 L.
@@ -69,6 +47,7 @@ lin-occ (lapp _ _ Ds) Ds.
 lin-occ (ldrop E) L :- lin-occ E L.
 lin-occ (lleaf E) L :- leaf-lin-occ E L.
 
+% [leaf-lin-occ E L] L lists the linear variables that the leaf E reads.
 func leaf-lin-occ linA.expr -> list lin.
 leaf-lin-occ (lvar D) [D].
 leaf-lin-occ (lzero _) [].
@@ -77,142 +56,178 @@ leaf-lin-occ (lplus D1 D2) [D1, D2].
 leaf-lin-occ (lmul _ D) [D].
 leaf-lin-occ (dup D) [D].
 
+% [labs-lin-occ B L] L lists the free linear variables of the body of B,
+% except those bound by B.
 func labs-lin-occ labs lexpr -> list lin.
 labs-lin-occ (lb _ B) L :- pi d\ labs-lin-occ-under d (B d) L.
 labs-lin-occ (lend E) L :- lin-occ E L.
 
-% Called under pi d, so L0 may mention d before d is filtered out.
+% [labs-lin-occ-under D B L] L is what labs-lin-occ B gives, without D. It
+% is called under pi d, so that list may mention d before d is filtered
+% out.
 func labs-lin-occ-under lin, labs lexpr -> list lin.
 labs-lin-occ-under D B L :- labs-lin-occ B L0, std.filter L0 (y\ not (y = D)) L.
 
+% [nabs-lin-occ B L] L lists the free linear variables of the body of B.
 func nabs-lin-occ nabs lexpr -> list lin.
 nabs-lin-occ (nb _ B) L :- pi x\ nabs-lin-occ (B x) L.
 nabs-lin-occ (nend E) L :- lin-occ E L.
 
 % --- T on expressions ------------------------------------------------------------
 
+% [transpose E Dd Cs E'] E' is T(Δ̇, Δ̈ | E) ⇝ ë:
+% - Dd = Δ̇ lists the linear variables E consumes, with their types, in the
+%   order in which E' returns their cotangents;
+% - Cs = Δ̈ lists one cotangent variable per result of E, in order;
+% - E' reads Cs (and E's non-linear variables) and returns the cotangents.
+% E' never mentions E's linear variables: they only fix positions. Where a
+% rule's results come out in another order than Dd, they are let-bound and
+% returned in Dd's order (a shuffle; it costs nothing).
 func transpose lexpr, list (pair lin ty), list lin -> lexpr.
-% TRet
-transpose (lret Ds) Dd Cs (lret Out) :- !, std.map Dd (cot-of Ds Cs) Out.
-% TLetLin
-transpose (llet E1 B) Dd Cs Out :- !, llet-lb E1 Dd Cs [] B Out.
-% TLetNonLin
-transpose (nlet E B) Dd Cs (nlet E B') :- !, nonlin-nabs Dd Cs B B'.
-% TUnpack (omitted in Figure 11; like TLetNonLin)
-transpose (nunpack V B) Dd Cs (nunpack V B') :- !, nonlin-nabs Dd Cs B B'.
-% TLinUnpack (omitted in Figure 11; like TLetLin, with ė1 = u̇)
-transpose (lunpack U B) Dd Cs Out :- !, lunpack-lb U Dd Cs [] B Out.
-% TApp
-transpose (lapp F Vs Ls) Dd Cs Out :- !, trfn F FT, app-out FT Vs Ls Dd Cs Out.
-% TDropLin
-transpose (ldrop _) Dd [] Out :- !, zeros Dd [] Out.
-% TLinVar
-transpose (lleaf (lvar _)) _ [C] (lret [C]) :- !.
-% TLinZero
-transpose (lleaf (lzero _)) [] [C] (ldrop (lret [C])) :- !.
-% TLinTup
-transpose (lleaf (ltuple Ds)) Dd [C] (lunpack C B) :- !,
-  std.map Ds (type-in Dd) Ts, cot-spine Ts [] (ltuple-out Ds Dd) B.
-% TLinAdd (both results are the same value, so their order does not matter)
-transpose (lleaf (lplus _ _)) _ [C] (lleaf (dup C)) :- !.
-% TLinMul
-transpose (lleaf (lmul V _)) _ [C] (lleaf (lmul V C)) :- !.
-% TDup
-transpose (lleaf (dup _)) _ [C1, C2] (lleaf (lplus C1 C2)).
+transpose (lret Ds) Dd Cs (lret Out) :- !, % TRet
+  std.zip Ds Cs KVs, std.map Dd (cot-of KVs) Out.
+transpose (llet E1 B) Dd Cs Out :- !, % TLetLin
+  llet-lb E1 Dd Cs [] B Out.
+transpose (nlet E B) Dd Cs (nlet E B') :- !, % TLetNonLin
+  nonlin-nabs Dd Cs B B'.
+% TUnpack and TLinUnpack are not in Figure 11: they are like TLetNonLin and
+% TLetLin (with ė1 = u̇).
+transpose (nunpack V B) Dd Cs (nunpack V B') :- !, % TUnpack
+  nonlin-nabs Dd Cs B B'.
+transpose (lunpack U B) Dd Cs Out :- !, % TLinUnpack
+  lunpack-lb U Dd Cs [] B Out.
+transpose (lapp F Vs Ls) Dd Cs Out :- !, % TApp
+  trfn F FT, app-out FT Vs Ls Dd Cs Out.
+transpose (ldrop _) Dd [] Out :- !, % TDropLin
+  zeros Dd [] Out.
+transpose (lleaf (lvar _)) _ [C] (lret [C]) :- !. % TLinVar
+transpose (lleaf (lzero _)) [] [C] (ldrop (lret [C])) :- !. % TLinZero
+transpose (lleaf (ltuple Ds)) Dd [C] (lunpack C B) :- !, % TLinTup
+  std.map Ds (std.lookup! Dd) Ts, cot-spine Ts [] (ltuple-out Ds Dd) B.
+% Both results of TLinAdd are the same value, so their order does not matter.
+transpose (lleaf (lplus _ _)) _ [C] (lleaf (dup C)) :- !. % TLinAdd
+transpose (lleaf (lmul V _)) _ [C] (lleaf (lmul V C)) :- !. % TLinMul
+transpose (lleaf (dup _)) _ [C1, C2] (lleaf (lplus C1 C2)). % TDup
 
-% TLetLin:
+% [llet-lb E1 Dd Cs Acc B Out] Out is the transpose of let (; v̇) = E1 in B,
+% for TLetLin:
 %   T(Δ̇1 ⊎ Δ̇2, Δ̈ | let (; v̇:τ̇) = ė1 in ė2)
 %   ⇝ let (; ẅ:σ̇, v̈:τ̇) = T(⟨ẇ:σ̇, v̇:τ̇⟩, Δ̈ | ė2) in (; T(Δ̇1, ⟨v̈⟩ | ė1), ẅ)
-% where Δ̇1 are the variables of Dd that ė1 reads, and ẇ the others.
+% where Δ̇1 are the variables of Dd that ė1 reads, and ẇ the others. Acc
+% holds the binders v̇ of B seen so far, reversed.
 func llet-lb lexpr, list (pair lin ty), list lin, list (pair lin ty), labs lexpr
   -> lexpr.
 llet-lb E1 Dd Cs Acc (lb T B) Out :- pi v\ llet-lb E1 Dd Cs [pr v T|Acc] (B v) Out.
 llet-lb E1 Dd Cs Acc (lend E2) (llet E2' B) :-
   std.rev Acc Vs, lin-occ E1 F1,
-  std.filter Dd (in-list F1) Dd1, std.filter Dd (not-in-list F1) Dd2,
+  std.partition Dd (in-list F1) Dd1 Dd2,
   std.append Dd2 Vs Dd2', transpose E2 Dd2' Cs E2',
-  std.map Dd2' pair-snd Ts2, cot-spine Ts2 [] (llet-mid E1 Dd Dd1 Dd2) B.
+  std.map Dd2' snd Ts2, cot-spine Ts2 [] (llet-mid E1 Dd Dd1 Dd2) B.
 
-% Cs2 holds ẅ (for Dd2), then v̈ (for the let's binders).
+% [llet-mid E1 Dd Dd1 Dd2 Cs2 Out] Out is the rest of TLetLin, once Cs2 is
+% bound to ẅ (for Dd2), then v̈ (for the let's binders): it transposes E1
+% against Dd1 and v̈, and returns the cotangents in Dd's order.
 func llet-mid lexpr, list (pair lin ty), list (pair lin ty), list (pair lin ty),
   list lin -> lexpr.
 llet-mid E1 Dd Dd1 Dd2 Cs2 (llet E1' B) :-
   std.length Dd2 N, std.split-at N Cs2 Ws VVs,
   transpose E1 Dd1 VVs E1',
-  std.map Dd1 pair-snd Ts1, cot-spine Ts1 [] (llet-end Dd Dd1 Dd2 Ws) B.
+  std.map Dd1 snd Ts1, cot-spine Ts1 [] (llet-end Dd Dd1 Dd2 Ws) B.
 
-% Return the cotangents in Dd's order: C1 for Dd1, Ws for Dd2.
+% [llet-end Dd Dd1 Dd2 Ws C1 Out] Out returns the cotangents in Dd's order:
+% C1 for Dd1, Ws for Dd2.
 func llet-end list (pair lin ty), list (pair lin ty), list (pair lin ty),
   list lin, list lin -> lexpr.
 llet-end Dd Dd1 Dd2 Ws C1 (lret Out) :-
-  std.map Dd1 pair-fst K1, std.map Dd2 pair-fst K2,
+  std.map Dd1 fst K1, std.map Dd2 fst K2,
   std.append K1 K2 Keys, std.append C1 Ws Vals,
-  std.map Dd (cot-of Keys Vals) Out.
+  std.zip Keys Vals KVs, std.map Dd (cot-of KVs) Out.
 
-% TLetNonLin / TUnpack: keep the non-linear binders, transpose the body.
+% [nonlin-nabs Dd Cs B B'] B' keeps the non-linear binders of B around the
+% transpose of its body, for TLetNonLin and TUnpack.
 func nonlin-nabs list (pair lin ty), list lin, nabs lexpr -> nabs lexpr.
 nonlin-nabs Dd Cs (nb T B) (nb T B') :- pi x\ nonlin-nabs Dd Cs (B x) (B' x).
 nonlin-nabs Dd Cs (nend E) (nend E') :- transpose E Dd Cs E'.
 
-% TLinUnpack:
+% [lunpack-lb U Dd Cs Acc B Out] Out is the transpose of
+% let (; ⊗ẇ) = U in B, for TLinUnpack:
 %   T(Δ̇, Δ̈ | let (; ⊗ẇ:⊗τ̇) = u̇ in ė)
 %   ⇝ let (; ż, ẅ) = T(⟨ż, ẇ⟩, Δ̈ | ė) in let (; ü) = ⊗(ẅ) in (; ü, ż)
-% where ż are the variables of Dd other than u̇.
+% where ż are the variables of Dd other than u̇. Acc holds the binders ẇ of
+% B seen so far, reversed.
 func lunpack-lb lin, list (pair lin ty), list lin, list (pair lin ty), labs lexpr
   -> lexpr.
 lunpack-lb U Dd Cs Acc (lb T B) Out :- pi w\ lunpack-lb U Dd Cs [pr w T|Acc] (B w) Out.
 lunpack-lb U Dd Cs Acc (lend E) (llet E' B) :-
-  std.rev Acc Ws, std.filter Dd (not-in-list [U]) Dd2,
+  std.rev Acc Ws, std.partition Dd (in-list [U]) _ Dd2,
   std.append Dd2 Ws Dd2', transpose E Dd2' Cs E',
-  std.map Dd2' pair-snd Ts, type-in Dd U TU,
+  std.map Dd2' snd Ts, std.lookup! Dd U TU,
   cot-spine Ts [] (lunpack-end U TU Dd Dd2) B.
 
+% [lunpack-end U TU Dd Dd2 Cs2 Out] Out is the rest of TLinUnpack, once Cs2
+% is bound to ż (for Dd2), then ẅ: it packs ẅ into ü, of type TU, and
+% returns the cotangents in Dd's order, ü for U.
 func lunpack-end lin, ty, list (pair lin ty), list (pair lin ty), list lin
   -> lexpr.
 lunpack-end U TU Dd Dd2 Cs2
     (llet (lleaf (ltuple WWs)) (lb TU c\ lend (lret (Out c)))) :-
-  std.length Dd2 N, std.split-at N Cs2 Zs WWs, std.map Dd2 pair-fst K2,
-  pi c\ std.map Dd (cot-of [U|K2] [c|Zs]) (Out c).
+  std.length Dd2 N, std.split-at N Cs2 Zs WWs, std.map Dd2 fst K2,
+  std.zip K2 Zs KVs, pi c\ std.map Dd (cot-of [pr U c|KVs]) (Out c).
 
-% TApp: f.lin^T(v ; v̈) returns the cotangents in the order of f.lin's
-% linear arguments Ls; reorder them if Dd has another order.
+% [app-out FT Vs Ls Dd Cs Out] Out is FT(Vs ; Cs), for TApp: FT = f.lin^T
+% returns the cotangents in the order of f.lin's linear arguments Ls, so
+% Out reorders them if Dd has another order.
 func app-out lfn, list linA.nl, list lin, list (pair lin ty), list lin -> lexpr.
-app-out FT Vs Ls Dd Cs (lapp FT Vs Cs) :- std.map Dd pair-fst Ls, !.
+app-out FT Vs Ls Dd Cs (lapp FT Vs Cs) :- std.map Dd fst Ls, !.
 app-out FT Vs Ls Dd Cs (llet (lapp FT Vs Cs) B) :-
-  std.map Ls (type-in Dd) Ts, cot-spine Ts [] (app-end Ls Dd) B.
+  std.map Ls (std.lookup! Dd) Ts, cot-spine Ts [] (app-end Ls Dd) B.
 
+% [app-end Ls Dd Rs Out] Out returns the cotangents Rs, given in the order
+% of Ls, in Dd's order.
 func app-end list lin, list (pair lin ty), list lin -> lexpr.
-app-end Ls Dd Rs (lret Out) :- std.map Dd (cot-of Ls Rs) Out.
+app-end Ls Dd Rs (lret Out) :- std.zip Ls Rs KVs, std.map Dd (cot-of KVs) Out.
 
-% TDropLin: a zero for each variable the dropped expression consumed.
+% [zeros Dd Acc Out] Out returns a zero for each variable of Dd, for
+% TDropLin: the dropped expression consumed them. Acc holds the zeros bound
+% so far, reversed.
 func zeros list (pair lin ty), list lin -> lexpr.
 zeros [] Acc (lret Zs) :- std.rev Acc Zs.
 zeros [pr _ T|Dd] Acc (llet (lleaf (lzero T)) (lb T z\ lend (E z))) :-
   pi z\ zeros Dd [z|Acc] (E z).
 
-% TLinTup: the result is a tuple; its cotangent is unpacked.
+% [ltuple-out Ds Dd Ws Out] Out returns, in Dd's order, the cotangents Ws
+% of the components Ds of the tuple, for TLinTup (the cotangent of the
+% tuple is unpacked into Ws).
 func ltuple-out list lin, list (pair lin ty), list lin -> lexpr.
-ltuple-out Ds Dd Ws (lret Out) :- std.map Dd (cot-of Ds Ws) Out.
+ltuple-out Ds Dd Ws (lret Out) :- std.zip Ds Ws KVs, std.map Dd (cot-of KVs) Out.
 
 % --- T on definitions and programs ---------------------------------------------
 %
 % TDef: def f.lin(v:τ ; v̇:τ̇) -> (; σ̇) = e
 %       ⇝ def f.lin^T(v:τ ; v̈:σ̇) -> (; τ̇) = T(⟨v̇:τ̇⟩, ⟨v̈:σ̇⟩ | e)
 
+% [transpose-def D D'] D' is the transpose f.lin^T of the linear definition
+% D of f.lin, for TDef.
 func transpose-def nabs (labs lfbody) -> nabs (labs lfbody).
 transpose-def (nb T B) (nb T B') :- pi x\ transpose-def (B x) (B' x).
 transpose-def (nend LA) (nend LA') :- def-labs [] LA LA'.
 
+% [def-labs Acc B Out] is transpose-def on the linear parameters and body
+% B: Out binds the cotangents of the results instead. Acc holds the linear
+% parameters seen so far, reversed.
 func def-labs list (pair lin ty), labs lfbody -> labs lfbody.
 def-labs Acc (lb T B) Out :- pi d\ def-labs [pr d T|Acc] (B d) Out.
 def-labs Acc (lend (lbody Ss E)) Out :-
-  std.rev Acc Dd, std.map Dd pair-snd Ts, cot-spine Ss [] (def-body Dd Ts E) Out.
+  std.rev Acc Dd, std.map Dd snd Ts, cot-spine Ss [] (def-body Dd Ts E) Out.
 
+% [def-body Dd Ts E Cs B] B is the body of f.lin^T: it returns values of
+% types Ts and computes T(Dd, Cs | E).
 func def-body list (pair lin ty), list ty, lexpr, list lin -> lfbody.
 def-body Dd Ts E Cs (lbody Ts E') :- transpose E Dd Cs E'.
 
-% Non-linear functions stay; each linear one is replaced by its transpose,
-% and calls to it by calls to the transpose.
+% [transpose-prog P P'] P' is T of the Linear B program P: non-linear
+% functions stay; each linear one is replaced by its transpose, and calls to
+% it by calls to the transpose.
 func transpose-prog prog -> prog.
 transpose-prog pnil pnil.
 transpose-prog (ndef D P) (ndef D P') :- pi f\ transpose-prog (P f) (P' f).
