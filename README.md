@@ -16,175 +16,8 @@ Files:
   [run-example.elpi](run-example.elpi) and [run-tests.elpi](run-tests.elpi),
   run by the [Makefile](Makefile).
 
-## You Only Linearize Once (Radul et al., 2023)
 
-The paper splits reverse-mode automatic differentiation (AD) into three
-separate program transformations:
-
-1. **J, forward mode (JVP).** This is the standard tangent transformation. Its
-   only twist is that the tangent code goes into the *linear* fragment of the
-   language.
-2. **U, unzipping.** U separates the non-linear (primal) part of each
-   expression and function from the linear (tangent) part. It turns `f` into
-   `f.nonlin` and `f.lin`. The non-linear values that the linear part needs
-   become extra outputs of `f.nonlin` and extra inputs of `f.lin`. This is the
-   "tape".
-3. **T, transposition.** T runs the linear part backward. Fan-out (`dup`)
-   becomes addition, `drop` becomes a zero, and `v * u̇` stays `v * ü`.
-
-So `grad = T ∘ U ∘ J`. Only J knows about derivatives, and only T knows about
-running backwards. This is how `jax.grad` is built, and Dex does the same.
-
-The boundary between the transformations is **Linear A**. It is a first-order,
-A-normal-form language without recursion or control flow. Every binder,
-argument list and result list is split into non-linear and linear parts
-`(v ; v̇)`. Its type system is substructural:
-
-- linear variables are used exactly once, with explicit `dup` and `drop`;
-- non-linear variables are used at least once (dropping one is explicit,
-  because it costs something).
-
-Multiplication `v * v̇` is linear in its right argument only.
-
-**Main results:**
-
-- Well-typed Linear A expressions are algebraically linear in their linear
-  inputs (Theorem 4.1).
-- J is total, correct and work-preserving.
-- U and T are total, correct, preserve work exactly, and preserve code size up
-  to a constant factor.
-
-All of this holds under an explicit cost model (Section 4.3). In that model
-`drop` costs something and `dup` is free, which is what makes "fan-out
-transposes to addition" preserve work.
-
-**Side results:**
-
-- **Checkpointing:** it falls out of unzipping. ULet may recompute a
-  non-linear intermediate in the linear part instead of saving it, and T then
-  handles that correctly.
-- **Partial evaluation:** unzipping is an instance of it, so checkpointing
-  ideas may carry over to partial evaluation in general.
-- **Fewer rules:** an AD system needs `N + H + L` rules instead of `N + N`,
-  with N primitives, of which H are higher-order and L are linear.
-
-**Left open:**
-
-- control flow, which would need sum types and probably dependent types;
-- multilinearity;
-- size-polymorphic arrays.
-
-## Tapenade, RR-7957 (Hascoët and Pascual, 2012)
-
-The report is the reference description of Tapenade's AD model. Tapenade is
-Inria's source-to-source AD tool for Fortran and C.
-
-- **Design choices (Section 3):**
-  - source transformation rather than operator overloading;
-  - one language-independent internal language, IL, on top of flow graphs
-    and nested symbol tables;
-  - each array is treated as a single unit by the analyses;
-  - derivatives are linked to variables by name (`x` gets `xd` or `xb`);
-  - one differentiated procedure per original procedure, valid for every
-    calling context;
-  - in adjoint mode, *Store-All* with *save-on-kill*: a value is saved just
-    before it is overwritten.
-- **Model (Section 4):**
-  - The tangent code puts each derivative instruction just before its
-    original instruction.
-  - The adjoint code has two sweeps. The forward sweep is the original code
-    plus `PUSH` of overwritten values and of control decisions. The backward
-    sweep `POP`s them and runs the derivative instructions in reverse order.
-  - Each procedure call becomes `FOO_FWD` / `FOO_BWD`. By default each call is
-    checkpointed instead ("joint mode").
-  - Refinements: activity analysis, implicit zeros, multi-directional
-    tangents, splitting and merging of adjoint instructions,
-    diff-liveness, TBR (To-Be-Recorded) analysis, recomputation, and
-    checkpointing directives.
-- **Specification (Section 5):** the AD-specific analyses are given as
-  data-flow equations, on top of pointer analysis and in-out analysis:
-  - Diff-dep;
-  - Varied and Useful, which together give Active;
-  - Dep;
-  - Diff-live;
-  - TBR;
-  - Adj-out.
-
-  The tangent and adjoint transformations are given as Natural Semantics
-  inference rules on well-structured code. The authors note that these rules
-  are "almost immediate" to implement in a logic language such as Prolog.
-- **Cost (Section 2):** tangent code costs about 1–3× the original (`R_t`).
-  Adjoint code costs about 5–10× (`R_a`), mostly because of data-flow
-  reversal. Section 6 reports measurements on real applications.
-
-## How Tapenade handles linearity
-
-Tapenade never states linearity as an invariant. There is no linear type and
-no separate linear program. The linear structure is still there, but it is
-implicit, and several analyses rediscover it.
-
-- **Linearity at the instruction level.** For an assignment `I_k`, the report
-  writes the local Jacobian `f'_k(X_{k-1})` (Section 4.3, Figure 6). The
-  tangent instruction is `Ẋ_k = f'_k × Ẋ_{k-1}` and the adjoint is
-  `X̄_{k-1} = X̄_k × f'_k`. The adjoint is produced by transposing that small
-  matrix-vector product directly.
-
-  YOLO instead transposes a *program* in which linearity is checked by types.
-  In Tapenade the transposition is built into the adjoint rules (Section 5.4),
-  which are written separately from the tangent rules (Section 5.3). This is
-  the `N + N` situation that YOLO avoids: the adjoint is derived from the
-  original code, not from the tangent code.
-- **The adjoint expression rule is transposition.** The adjoint of an
-  expression pushes a cotangent `VAL` down to the leaves:
-  - `EXPR1*EXPR2` sends `EXPR2*VAL` to the left and `EXPR1*VAL` to the right;
-  - each active leaf gets `REF̄ := REF̄ + VAL`.
-
-  An overwritten variable gets `REF̄ := 0.0`. These match YOLO's rules: fan-out
-  (`dup`) becomes accumulation (`+`), and a killed value becomes a zero.
-  Tapenade has no `drop`/`dup`: variables can be read many times and
-  overwritten, so accumulation with `+=` and resetting take their place.
-- **Activity analysis ≈ the linear/non-linear split.** A variable is *active*
-  when it is both *varied* (depends differentiably on an input) and *useful*
-  (influences an output differentiably). Only active variables get a
-  derivative.
-
-  This decides which values are tangents, the job Linear A does with its
-  `;`-split syntax. The difference is that Tapenade finds it by conservative
-  data-flow analysis on untyped imperative code ("active" means *possibly*
-  active). It also merges calling contexts, so one differentiated procedure
-  may receive dummy zero derivatives.
-- **Diff-liveness ≈ unzipping's dead code.** Diff-liveness removes primal
-  instructions whose results no derivative needs. In YOLO's terms, it keeps
-  only the part of `f.nonlin` that `f.lin` actually reads.
-- **TBR uses linearity explicitly.** This is the one place where the report
-  appeals to linearity directly (Section 4.9). A value has to be saved only if
-  it is used in a derivative instruction. If a variable "is always used in
-  linear expressions, it never appears in the derivative computations", so it
-  is not pushed.
-
-  In Linear A terms, the values to record are the non-linear coefficients.
-  Those are the left operands of `v * u̇` (and of primitives' JVPs), which ULet
-  passes from `f.nonlin` to `f.lin`. TBR computes, with a flow analysis, the
-  set that unzipping produces by construction.
-- **The tape vs. residual variables.** Tapenade's forward sweep with
-  `PUSH`/`POP` is unzipping with a stack as the store. YOLO keeps the residuals
-  as ordinary variables, which makes their lifetimes longer (Section 4.3.2).
-- **Checkpointing and recomputation.** Both systems trade storage for
-  recomputation:
-  - Tapenade stores snapshots `SNP = out(C) ∩ (TBR⁻(C) ∪ Diff-live⁻(C))` and
-    recomputes cheap assignments instead of pushing them.
-  - In YOLO this is the free choice in ULet between saving a non-linear
-    intermediate and recomputing it inside the linear part.
-- **What each covers that the other doesn't.**
-  - Tapenade handles control flow (it records the branches taken), aliasing,
-    pointers, arrays and whole Fortran/C programs. Linear A has none of these.
-  - YOLO gives a mechanically checkable linearity invariant and proofs that
-    work is preserved. Tapenade only reports measured slowdowns (`R_t`, `R_a`).
-- **Multilinearity.** Neither system models it. In Tapenade, the derivative of
-  `a*b` with both active is `ad*b + a*bd`, and each term is non-linear times
-  linear. That is exactly YOLO's choice to make `*` linear in one argument.
-
-## How to run
+# How to run
 
 You need [Elpi](https://github.com/LPCIC/elpi) 3.8 or later, which added the
 `data` / `symb` syntax. Install it with `opam install elpi`.
@@ -197,6 +30,14 @@ make test    # all the tests:       elpi -test run-tests.elpi
 ```
 
 Set `ELPI=…` to use another `elpi` binary (`make test ELPI=~/bin/elpi`).
+
+It should also work on windows, tested like so:
+
+```
+wine ~/Downloads/elpi-5.5.x-Windows.exe -test ./run-example.elpi
+```
+
+You can find windows binaries on the elpi homepage.
 
 The running example is `f(u) = −sin(u)` at `u = 0.5` (Figures 6, 9 and 10).
 `make` prints each step in the paper's notation, checks that it type-checks,
@@ -620,3 +461,171 @@ functions; they write `linA.sin` and so on.
 
 Not done: checkpointing (the free choice in ULet to recompute a non-linear
 value in the linear part instead of putting it on the tape).
+
+# You Only Linearize Once (Radul et al., 2023)
+
+The paper splits reverse-mode automatic differentiation (AD) into three
+separate program transformations:
+
+1. **J, forward mode (JVP).** This is the standard tangent transformation. Its
+   only twist is that the tangent code goes into the *linear* fragment of the
+   language.
+2. **U, unzipping.** U separates the non-linear (primal) part of each
+   expression and function from the linear (tangent) part. It turns `f` into
+   `f.nonlin` and `f.lin`. The non-linear values that the linear part needs
+   become extra outputs of `f.nonlin` and extra inputs of `f.lin`. This is the
+   "tape".
+3. **T, transposition.** T runs the linear part backward. Fan-out (`dup`)
+   becomes addition, `drop` becomes a zero, and `v * u̇` stays `v * ü`.
+
+So `grad = T ∘ U ∘ J`. Only J knows about derivatives, and only T knows about
+running backwards. This is how `jax.grad` is built, and Dex does the same.
+
+The boundary between the transformations is **Linear A**. It is a first-order,
+A-normal-form language without recursion or control flow. Every binder,
+argument list and result list is split into non-linear and linear parts
+`(v ; v̇)`. Its type system is substructural:
+
+- linear variables are used exactly once, with explicit `dup` and `drop`;
+- non-linear variables are used at least once (dropping one is explicit,
+  because it costs something).
+
+Multiplication `v * v̇` is linear in its right argument only.
+
+**Main results:**
+
+- Well-typed Linear A expressions are algebraically linear in their linear
+  inputs (Theorem 4.1).
+- J is total, correct and work-preserving.
+- U and T are total, correct, preserve work exactly, and preserve code size up
+  to a constant factor.
+
+All of this holds under an explicit cost model (Section 4.3). In that model
+`drop` costs something and `dup` is free, which is what makes "fan-out
+transposes to addition" preserve work.
+
+**Side results:**
+
+- **Checkpointing:** it falls out of unzipping. ULet may recompute a
+  non-linear intermediate in the linear part instead of saving it, and T then
+  handles that correctly.
+- **Partial evaluation:** unzipping is an instance of it, so checkpointing
+  ideas may carry over to partial evaluation in general.
+- **Fewer rules:** an AD system needs `N + H + L` rules instead of `N + N`,
+  with N primitives, of which H are higher-order and L are linear.
+
+**Left open:**
+
+- control flow, which would need sum types and probably dependent types;
+- multilinearity;
+- size-polymorphic arrays.
+
+# Tapenade, RR-7957 (Hascoët and Pascual, 2012)
+
+The report is the reference description of Tapenade's AD model. Tapenade is
+Inria's source-to-source AD tool for Fortran and C.
+
+- **Design choices (Section 3):**
+  - source transformation rather than operator overloading;
+  - one language-independent internal language, IL, on top of flow graphs
+    and nested symbol tables;
+  - each array is treated as a single unit by the analyses;
+  - derivatives are linked to variables by name (`x` gets `xd` or `xb`);
+  - one differentiated procedure per original procedure, valid for every
+    calling context;
+  - in adjoint mode, *Store-All* with *save-on-kill*: a value is saved just
+    before it is overwritten.
+- **Model (Section 4):**
+  - The tangent code puts each derivative instruction just before its
+    original instruction.
+  - The adjoint code has two sweeps. The forward sweep is the original code
+    plus `PUSH` of overwritten values and of control decisions. The backward
+    sweep `POP`s them and runs the derivative instructions in reverse order.
+  - Each procedure call becomes `FOO_FWD` / `FOO_BWD`. By default each call is
+    checkpointed instead ("joint mode").
+  - Refinements: activity analysis, implicit zeros, multi-directional
+    tangents, splitting and merging of adjoint instructions,
+    diff-liveness, TBR (To-Be-Recorded) analysis, recomputation, and
+    checkpointing directives.
+- **Specification (Section 5):** the AD-specific analyses are given as
+  data-flow equations, on top of pointer analysis and in-out analysis:
+  - Diff-dep;
+  - Varied and Useful, which together give Active;
+  - Dep;
+  - Diff-live;
+  - TBR;
+  - Adj-out.
+
+  The tangent and adjoint transformations are given as Natural Semantics
+  inference rules on well-structured code. The authors note that these rules
+  are "almost immediate" to implement in a logic language such as Prolog.
+- **Cost (Section 2):** tangent code costs about 1–3× the original (`R_t`).
+  Adjoint code costs about 5–10× (`R_a`), mostly because of data-flow
+  reversal. Section 6 reports measurements on real applications.
+
+## How Tapenade handles linearity
+
+Tapenade never states linearity as an invariant. There is no linear type and
+no separate linear program. The linear structure is still there, but it is
+implicit, and several analyses rediscover it.
+
+- **Linearity at the instruction level.** For an assignment `I_k`, the report
+  writes the local Jacobian `f'_k(X_{k-1})` (Section 4.3, Figure 6). The
+  tangent instruction is `Ẋ_k = f'_k × Ẋ_{k-1}` and the adjoint is
+  `X̄_{k-1} = X̄_k × f'_k`. The adjoint is produced by transposing that small
+  matrix-vector product directly.
+
+  YOLO instead transposes a *program* in which linearity is checked by types.
+  In Tapenade the transposition is built into the adjoint rules (Section 5.4),
+  which are written separately from the tangent rules (Section 5.3). This is
+  the `N + N` situation that YOLO avoids: the adjoint is derived from the
+  original code, not from the tangent code.
+- **The adjoint expression rule is transposition.** The adjoint of an
+  expression pushes a cotangent `VAL` down to the leaves:
+  - `EXPR1*EXPR2` sends `EXPR2*VAL` to the left and `EXPR1*VAL` to the right;
+  - each active leaf gets `REF̄ := REF̄ + VAL`.
+
+  An overwritten variable gets `REF̄ := 0.0`. These match YOLO's rules: fan-out
+  (`dup`) becomes accumulation (`+`), and a killed value becomes a zero.
+  Tapenade has no `drop`/`dup`: variables can be read many times and
+  overwritten, so accumulation with `+=` and resetting take their place.
+- **Activity analysis ≈ the linear/non-linear split.** A variable is *active*
+  when it is both *varied* (depends differentiably on an input) and *useful*
+  (influences an output differentiably). Only active variables get a
+  derivative.
+
+  This decides which values are tangents, the job Linear A does with its
+  `;`-split syntax. The difference is that Tapenade finds it by conservative
+  data-flow analysis on untyped imperative code ("active" means *possibly*
+  active). It also merges calling contexts, so one differentiated procedure
+  may receive dummy zero derivatives.
+- **Diff-liveness ≈ unzipping's dead code.** Diff-liveness removes primal
+  instructions whose results no derivative needs. In YOLO's terms, it keeps
+  only the part of `f.nonlin` that `f.lin` actually reads.
+- **TBR uses linearity explicitly.** This is the one place where the report
+  appeals to linearity directly (Section 4.9). A value has to be saved only if
+  it is used in a derivative instruction. If a variable "is always used in
+  linear expressions, it never appears in the derivative computations", so it
+  is not pushed.
+
+  In Linear A terms, the values to record are the non-linear coefficients.
+  Those are the left operands of `v * u̇` (and of primitives' JVPs), which ULet
+  passes from `f.nonlin` to `f.lin`. TBR computes, with a flow analysis, the
+  set that unzipping produces by construction.
+- **The tape vs. residual variables.** Tapenade's forward sweep with
+  `PUSH`/`POP` is unzipping with a stack as the store. YOLO keeps the residuals
+  as ordinary variables, which makes their lifetimes longer (Section 4.3.2).
+- **Checkpointing and recomputation.** Both systems trade storage for
+  recomputation:
+  - Tapenade stores snapshots `SNP = out(C) ∩ (TBR⁻(C) ∪ Diff-live⁻(C))` and
+    recomputes cheap assignments instead of pushing them.
+  - In YOLO this is the free choice in ULet between saving a non-linear
+    intermediate and recomputing it inside the linear part.
+- **What each covers that the other doesn't.**
+  - Tapenade handles control flow (it records the branches taken), aliasing,
+    pointers, arrays and whole Fortran/C programs. Linear A has none of these.
+  - YOLO gives a mechanically checkable linearity invariant and proofs that
+    work is preserved. Tapenade only reports measured slowdowns (`R_t`, `R_a`).
+- **Multilinearity.** Neither system models it. In Tapenade, the derivative of
+  `a*b` with both active is `ad*b + a*bd`, and each term is non-linear times
+  linear. That is exactly YOLO's choice to make `*` linear in one argument.
