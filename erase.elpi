@@ -1,0 +1,212 @@
+% Transformation L: linearity erasure (Section 4.5)
+%
+% Linear A to Linear A (non-linear fragment).
+
+accumulate linA.
+
+% ---------------------------------------------------------------------------
+% Linearity erasure L (Section 4.5)
+% ---------------------------------------------------------------------------
+
+namespace erase {
+
+shorten linA.{
+  ty, r, tup, val, real, vtup, nl, lin, fn, nbind, nb, nend, lbind, lb, lend,
+  expr, ret, let, unpack, lunpack, app, nvar, lit, tuple, plus, mul, lvar,
+  lzero, ltuple, lplus, lmul, dup, drop, fbody, body, prog, def, pnil }.
+shorten linA.{ sin, cos, exp, neg }.
+
+%
+% lerase-prog P P' turns every linear variable and expression into a
+% non-linear one:
+% - for every type at which linear +, * and 0̇ are used, a fresh function
+%   does the same in the non-linear fragment (unpacking and repacking
+%   tuples), and is defined before the program;
+% - linear +, * and 0̇ become calls to those functions;
+% - references to the results of dup refer to its input, and dup is gone;
+% - all semicolons move to the right: linear binders, arguments and results
+%   come after the non-linear ones.
+
+data op.
+symb opz ty -> op.   % 0̇ at a type
+symb opp ty -> op.   % linear + at a type
+symb opm ty -> op.   % linear * at a type (the scalar is always R)
+
+func lty  lin -> ty.            % types of linear variables, for lops
+func lmap lin -> nl, ty.        % linear variable ↦ its erased variable
+func opfn op -> fn.             % op ↦ the function implementing it
+
+% Which ops a program uses.
+func lops expr -> list op.
+lops (let E B) L :- lops E L1, lops-nb B lops L2, std.append L1 L2 L.
+lops (unpack _ B) L :- lops-nb B lops L.
+lops (lunpack _ B) L :- lops-lb B lops L.
+lops (drop E) L :- lops E L.
+lops (lzero T) [opz T].
+lops (lplus D _) [opp T] :- lty D T.
+lops (lmul _ D) [opm T] :- lty D T.
+lops (ret _ _) [].
+lops (app _ _ _) [].
+lops (nvar _) [].
+lops (lit _) [].
+lops (tuple _) [].
+lops (sin _) [].
+lops (cos _) [].
+lops (exp _) [].
+lops (neg _) [].
+lops (plus _ _) [].
+lops (mul _ _) [].
+lops (lvar _) [].
+lops (ltuple _) [].
+lops (dup _) [].
+
+func lops-nb nbind A, (func A -> list op) -> list op.
+lops-nb (nb _ B) K L :- pi x\ lops-nb (B x) K L.
+lops-nb (nend LB) K L :- lops-lb LB K L.
+
+func lops-lb lbind A, (func A -> list op) -> list op.
+lops-lb (lb T B) K L :- pi d\ lty d T ==> lops-lb (B d) K L.
+lops-lb (lend X) K L :- K X L.
+
+func lops-body fbody -> list op.
+lops-body (body _ _ E) L :- lops E L.
+
+func lops-prog prog -> list op.
+lops-prog pnil [].
+lops-prog (def D P) L :-
+  lops-nb D lops-body L1, (pi f\ lops-prog (P f) L2), std.append L1 L2 L.
+
+% Close under components (an op on a tuple uses the op on each component)
+% and order the result so that components come first.
+func close-ops list op, list op -> list op.
+close-ops [] Acc Acc.
+close-ops [Op|Ops] Acc Out :- add-op Op Acc Acc1, close-ops Ops Acc1 Out.
+
+func add-op op, list op -> list op.
+add-op Op Acc Acc :- std.mem! Acc Op, !.
+add-op Op Acc Out :-
+  op-deps Op Ds, close-ops Ds Acc Acc1, std.append Acc1 [Op] Out.
+
+func op-deps op -> list op.
+op-deps (opz (tup Ts)) Ds :- !, std.map Ts (t\ o\ o = opz t) Ds.
+op-deps (opp (tup Ts)) Ds :- !, std.map Ts (t\ o\ o = opp t) Ds.
+op-deps (opm (tup Ts)) Ds :- !, std.map Ts (t\ o\ o = opm t) Ds.
+op-deps _ [].
+
+% The definition implementing an op.
+func op-def op -> nbind fbody.
+op-def (opz r) (nend (lend (body [r] [] (lit 0.0)))) :- !.
+op-def (opz (tup Ts)) (nend (lend (body [tup Ts] [] E))) :- !,
+  mk-zero Ts [] E.
+op-def (opp r) (nb r x\ nb r y\ nend (lend (body [r] [] (plus x y)))) :- !.
+op-def (opp (tup Ts))
+  (nb (tup Ts) x\ nb (tup Ts) y\ nend (lend (body [tup Ts] [] (E x y)))) :- !,
+  pi x\ pi y\ mk-unpack2 x y Ts mk-plus (E x y).
+op-def (opm r) (nb r a\ nb r x\ nend (lend (body [r] [] (mul a x)))) :- !.
+op-def (opm (tup Ts))
+  (nb r a\ nb (tup Ts) x\ nend (lend (body [tup Ts] [] (E a x)))) :-
+  pi a\ pi x\ mk-unpack x Ts (mk-scale a Ts []) (E a x).
+
+func mk-zero list ty, list nl -> expr.
+mk-zero [] Acc (tuple Vs) :- std.rev Acc Vs.
+mk-zero [T|Ts] Acc (let (app F [] []) (nb T z\ nend (lend (E z)))) :-
+  opfn (opz T) F, pi z\ mk-zero Ts [z|Acc] (E z).
+
+% let (⊗xs ;) = X in K xs
+func mk-unpack nl, list ty, (func list nl -> expr) -> expr.
+mk-unpack X Ts K (unpack X B) :- bind-list Ts [] K B.
+
+func bind-list list ty, list nl, (func list nl -> expr) -> nbind expr.
+bind-list [] Acc K (nend (lend E)) :- std.rev Acc Xs, K Xs E.
+bind-list [T|Ts] Acc K (nb T B) :- pi x\ bind-list Ts [x|Acc] K (B x).
+
+% Unpack two tuples X and Y of the same type, then K xs ys.
+func mk-unpack2 nl, nl, list ty, (func list ty, list nl, list nl -> expr)
+  -> expr.
+mk-unpack2 X Y Ts K E :-
+  mk-unpack X Ts (Xs\ R\ mk-unpack Y Ts (K Ts Xs) R) E.
+
+func mk-plus list ty, list nl, list nl -> expr.
+mk-plus Ts Xs Ys E :- mk-plus-acc Ts Xs Ys [] E.
+
+func mk-plus-acc list ty, list nl, list nl, list nl -> expr.
+mk-plus-acc [] [] [] Acc (tuple Vs) :- std.rev Acc Vs.
+mk-plus-acc [T|Ts] [X|Xs] [Y|Ys] Acc
+    (let (app F [X, Y] []) (nb T s\ nend (lend (E s)))) :-
+  opfn (opp T) F, pi s\ mk-plus-acc Ts Xs Ys [s|Acc] (E s).
+
+% Acc (the scaled components so far, reversed) comes before Xs, so that
+% mk-scale A Ts [] is the continuation of mk-unpack.
+func mk-scale nl, list ty, list nl, list nl -> expr.
+mk-scale _ [] Acc [] (tuple Vs) :- std.rev Acc Vs.
+mk-scale A [T|Ts] Acc [X|Xs]
+    (let (app F [A, X] []) (nb T s\ nend (lend (E s)))) :-
+  opfn (opm T) F, pi s\ mk-scale A Ts [s|Acc] Xs (E s).
+
+func lname lin -> nl.
+lname D X :- lmap D X _.
+
+% Erase a binder spine: linear binders become non-linear binders placed
+% after the non-linear ones.
+func le-nb nbind A, (func A -> A) -> nbind A.
+le-nb (nb T B) K (nb T B') :- pi x\ le-nb (B x) K (B' x).
+le-nb (nend L) K L' :- le-lb L K L'.
+
+func le-lb lbind A, (func A -> A) -> nbind A.
+le-lb (lend X) K (nend (lend X')) :- K X X'.
+le-lb (lb T B) K (nb T B') :-
+  pi d\ pi x\ lmap d x T ==> le-lb (B d) K (B' x).
+
+func lerase expr -> expr.
+lerase (ret Vs LVs) (ret Ws []) :-
+  std.map LVs lname Xs, std.append Vs Xs Ws.
+% dup is removed: both results are renamed to its input.
+lerase (let (dup D) (nend (lb T a\ lb T b\ lend (E a b)))) E' :- !,
+  lmap D X _,
+  pi a\ pi b\ lmap a X T ==> lmap b X T ==> lerase (E a b) E'.
+lerase (let E B) (let E' B') :- lerase E E', le-nb B lerase B'.
+lerase (unpack V B) (unpack V B') :- le-nb B lerase B'.
+lerase (lunpack D B) (unpack X B') :- lname D X, le-lb B lerase B'.
+lerase (app F Vs LVs) (app F Ws []) :-
+  std.map LVs lname Xs, std.append Vs Xs Ws.
+lerase (nvar V) (nvar V).
+lerase (lit F) (lit F).
+lerase (tuple Vs) (tuple Vs).
+lerase (sin V) (sin V).
+lerase (cos V) (cos V).
+lerase (exp V) (exp V).
+lerase (neg V) (neg V).
+lerase (plus V1 V2) (plus V1 V2).
+lerase (mul V1 V2) (mul V1 V2).
+lerase (lvar D) (nvar X) :- lname D X.
+lerase (lzero T) (app F [] []) :- opfn (opz T) F.
+lerase (ltuple Ds) (tuple Xs) :- std.map Ds lname Xs.
+lerase (lplus D1 D2) (app F [X1, X2] []) :-
+  lmap D1 X1 T, lname D2 X2, opfn (opp T) F.
+lerase (lmul V D) (app F [V, X] []) :- lmap D X T, opfn (opm T) F.
+lerase (dup D) (ret [X, X] []) :- lname D X.
+lerase (drop E) (drop E') :- lerase E E'.
+
+func lerase-body fbody -> fbody.
+lerase-body (body Ss LSs E) (body Ts [] E') :-
+  std.append Ss LSs Ts, lerase E E'.
+
+func lerase-def nbind fbody -> nbind fbody.
+lerase-def D D' :- le-nb D lerase-body D'.
+
+func lerase-defs prog -> prog.
+lerase-defs pnil pnil.
+lerase-defs (def D P) (def D' P') :-
+  lerase-def D D', pi f\ lerase-defs (P f) (P' f).
+
+% Define the op functions first, then the erased program.
+func lerase-prog prog -> prog.
+lerase-prog P P' :-
+  lops-prog P Ops0, close-ops Ops0 [] Ops, with-ops Ops P P'.
+
+func with-ops list op, prog -> prog.
+with-ops [] P P' :- lerase-defs P P'.
+with-ops [Op|Ops] P (def D P') :-
+  op-def Op D, pi h\ opfn Op h =!=> with-ops Ops P (P' h).
+
+} % namespace erase

@@ -1,0 +1,310 @@
+% Transformation U: unzipping (Section 6, Figure 8)
+%
+% Linear A to Linear B.
+
+accumulate linA.
+accumulate linB.
+
+% ---------------------------------------------------------------------------
+% Unzipping U (Section 6, Figure 8), from Linear A to Linear B
+% ---------------------------------------------------------------------------
+
+namespace unzip {
+
+% Input and output both have ret, let, unpack, ...: the Linear A ones are
+% written linA.x and the Linear B ones linB.x. Only the other names are
+% shortened.
+shorten linA.{
+  ty, tup, nl, lin, fn, fbody, body, tuple }.
+shorten linB.{
+  nexpr, lexpr, nabs, labs, leaf, lret, llet, nunpack, lapp, ldrop, lleaf,
+  nfbody, lfbody, nbody, lbody, ndef, ldef, nfn, lfn }.
+
+% U(e) ⇝ E; e'; ė' is represented as a context E of non-linear lets and
+% unpacks, in HOAS, whose hole holds e' and ė'.
+data ctx.
+symb hole    nexpr -> lexpr -> ctx.        % □, filled with e' and ė'
+symb clet    nexpr -> nabs ctx -> ctx.     % let (v:τ ;) = e in E
+symb cunpack nl -> nabs ctx -> ctx.        % let (⊗w:⊗τ ;) = v in E
+
+% plug E K: replace the hole (e', ė') of E by K e' ė'.
+func plug ctx, (func nexpr, lexpr -> ctx) -> ctx.
+plug (hole N L) K C :- K N L C.
+plug (clet E B) K (clet E B') :- plug-nabs B K B'.
+plug (cunpack V B) K (cunpack V B') :- plug-nabs B K B'.
+
+func plug-nabs nabs ctx, (func nexpr, lexpr -> ctx) -> nabs ctx.
+plug-nabs (linB.nb T B) K (linB.nb T B') :- pi x\ plug-nabs (B x) K (B' x).
+plug-nabs (linB.nend C) K (linB.nend C') :- plug C K C'.
+
+% --- Renaming ------------------------------------------------------------------
+%
+% Some rules move a binder: ULet and ULinUnpack bind v̇ around ė' only, and
+% UDef binds the tape variables inside the linear parameters of f.lin. A
+% HOAS binder cannot be moved by unification, so these rules copy ė' with a
+% renaming: cp-nl x y / cp-lin ẋ ẏ, loaded with =!=>, map a variable to its
+% new name, and every other variable is kept.
+
+func cp-nl nl -> nl.
+cp-nl X X.
+
+func cp-lin lin -> lin.
+cp-lin X X.
+
+func cp-leaf linA.expr -> linA.expr.
+cp-leaf (linA.nvar V) (linA.nvar V') :- cp-nl V V'.
+cp-leaf (linA.lit F) (linA.lit F).
+cp-leaf (linA.tuple Vs) (linA.tuple Vs') :- std.map Vs cp-nl Vs'.
+cp-leaf (linA.sin V) (linA.sin V') :- cp-nl V V'.
+cp-leaf (linA.cos V) (linA.cos V') :- cp-nl V V'.
+cp-leaf (linA.exp V) (linA.exp V') :- cp-nl V V'.
+cp-leaf (linA.neg V) (linA.neg V') :- cp-nl V V'.
+cp-leaf (linA.plus V1 V2) (linA.plus V1' V2') :- cp-nl V1 V1', cp-nl V2 V2'.
+cp-leaf (linA.mul V1 V2) (linA.mul V1' V2') :- cp-nl V1 V1', cp-nl V2 V2'.
+cp-leaf (linA.lvar D) (linA.lvar D') :- cp-lin D D'.
+cp-leaf (linA.lzero T) (linA.lzero T).
+cp-leaf (linA.ltuple Ds) (linA.ltuple Ds') :- std.map Ds cp-lin Ds'.
+cp-leaf (linA.lplus D1 D2) (linA.lplus D1' D2') :- cp-lin D1 D1', cp-lin D2 D2'.
+cp-leaf (linA.lmul V D) (linA.lmul V' D') :- cp-nl V V', cp-lin D D'.
+cp-leaf (linA.dup D) (linA.dup D') :- cp-lin D D'.
+
+func cp-nexpr nexpr -> nexpr.
+cp-nexpr (linB.ret Vs) (linB.ret Vs') :- std.map Vs cp-nl Vs'.
+cp-nexpr (linB.let E B) (linB.let E' B') :- cp-nexpr E E', cp-nabs cp-nexpr B B'.
+cp-nexpr (linB.unpack V B) (linB.unpack V' B') :- cp-nl V V', cp-nabs cp-nexpr B B'.
+cp-nexpr (linB.app F Vs) (linB.app F Vs') :- std.map Vs cp-nl Vs'.
+cp-nexpr (linB.drop E) (linB.drop E') :- cp-nexpr E E'.
+cp-nexpr (leaf E) (leaf E') :- cp-leaf E E'.
+
+func cp-lexpr lexpr -> lexpr.
+cp-lexpr (lret Ds) (lret Ds') :- std.map Ds cp-lin Ds'.
+cp-lexpr (llet E B) (llet E' B') :- cp-lexpr E E', cp-labs cp-lexpr B B'.
+cp-lexpr (linB.nlet E B) (linB.nlet E' B') :- cp-nexpr E E', cp-nabs cp-lexpr B B'.
+cp-lexpr (linB.lunpack D B) (linB.lunpack D' B') :- cp-lin D D', cp-labs cp-lexpr B B'.
+cp-lexpr (nunpack V B) (nunpack V' B') :- cp-nl V V', cp-nabs cp-lexpr B B'.
+cp-lexpr (lapp F Vs Ds) (lapp F Vs' Ds') :-
+  std.map Vs cp-nl Vs', std.map Ds cp-lin Ds'.
+cp-lexpr (ldrop E) (ldrop E') :- cp-lexpr E E'.
+cp-lexpr (lleaf E) (lleaf E') :- cp-leaf E E'.
+
+func cp-nabs (func A -> A), nabs A -> nabs A.
+cp-nabs K (linB.nb T B) (linB.nb T B') :- pi x\ cp-nabs K (B x) (B' x).
+cp-nabs K (linB.nend X) (linB.nend X') :- K X X'.
+
+func cp-labs (func A -> A), labs A -> labs A.
+cp-labs K (linB.lb T B) (linB.lb T B') :- pi d\ cp-labs K (B d) (B' d).
+cp-labs K (linB.lend X) (linB.lend X') :- K X X'.
+
+% rebind Ds L: bind the linear variables Ds (with their types) around L.
+func rebind list (pair lin ty), lexpr -> labs lexpr.
+rebind [] L (linB.lend L') :- cp-lexpr L L'.
+rebind [pr D T|Ds] L (linB.lb T B) :- pi d\ cp-lin D d =!=> rebind Ds L (B d).
+
+% --- Non-linear variables read by an expression --------------------------------
+
+func nocc nexpr -> list nl.
+nocc (linB.ret Vs) Vs.
+nocc (linB.let E B) L :- nocc E L1, nabs-occ nocc B L2, std.append L1 L2 L.
+nocc (linB.unpack V B) [V|L] :- nabs-occ nocc B L.
+nocc (linB.app _ Vs) Vs.
+nocc (linB.drop E) L :- nocc E L.
+nocc (leaf E) L :- linA.occ E L.
+
+func locc lexpr -> list nl.
+locc (lret _) [].
+locc (llet E B) L :- locc E L1, labs-occ locc B L2, std.append L1 L2 L.
+locc (linB.nlet E B) L :- nocc E L1, nabs-occ locc B L2, std.append L1 L2 L.
+locc (linB.lunpack _ B) L :- labs-occ locc B L.
+locc (nunpack V B) [V|L] :- nabs-occ locc B L.
+locc (lapp _ Vs _) Vs.
+locc (ldrop E) L :- locc E L.
+locc (lleaf E) L :- linA.occ E L.
+
+func nabs-occ (func A -> list nl), nabs A -> list nl.
+nabs-occ K (linB.nb _ B) L :- pi x\ nabs-occ-under K x (B x) L.
+nabs-occ K (linB.nend X) L :- K X L.
+
+% Called under pi x, so L0 may mention x before x is filtered out.
+func nabs-occ-under (func A -> list nl), nl, nabs A -> list nl.
+nabs-occ-under K X B L :- nabs-occ K B L0, std.filter L0 (y\ not (y = X)) L.
+
+func labs-occ (func A -> list nl), labs A -> list nl.
+labs-occ K (linB.lb _ B) L :- pi d\ labs-occ K (B d) L.
+labs-occ K (linB.lend X) L :- K X L.
+
+% --- U on expressions ------------------------------------------------------------
+
+func ufn fn -> nfn, lfn, list ty, ty.   % f ↦ f.nonlin, f.lin, σ, ⊗π
+
+func unzip linA.expr -> ctx.
+% URet
+unzip (linA.ret Vs Ls) (hole (linB.ret Vs) (lret Ls)) :- !.
+% ULet
+unzip (linA.let E1 B) R :- !, unzip E1 R1, plug R1 (let-k B) R.
+% UUnpack
+unzip (linA.unpack V B) (cunpack V B') :- !, unpack-nb B B'.
+% ULinUnpack
+unzip (linA.lunpack D B) R :- !, lunpack-lb D B [] R.
+% UApp
+unzip (linA.app F Vs Ls) (clet (linB.app FN Vs) B) :- !,
+  ufn F FN FL Ss TT, app-spine TT FL Ls Ss [] B.
+% UDrop
+unzip (linA.drop E) R :- !, unzip E R0, plug R0 drop-k R.
+% ULeaf
+unzip E (hole (leaf E) (lret [])) :- linB.nleaf E, !.
+% ULinLeaf
+unzip E (hole (linB.ret []) (lleaf E)) :- linB.lleaf? E.
+
+% ULet: E1, let (v:τ ;) = e1' in E2 ; e2' ; let (; v̇:τ̇) = ė1' in ė2'.
+func let-k linA.nbind linA.expr, nexpr, lexpr -> ctx.
+let-k B N1 L1 R :- let-nb L1 B B', mk-clet N1 B' R.
+
+func let-nb lexpr, linA.nbind linA.expr -> nabs ctx.
+let-nb L1 (linA.nb T B) (linB.nb T B') :- pi x\ let-nb L1 (B x) (B' x).
+let-nb L1 (linA.nend LB) (linB.nend C) :- let-lb L1 [] LB C.
+
+func let-lb lexpr, list (pair lin ty), linA.lbind linA.expr -> ctx.
+let-lb L1 Acc (linA.lb T B) C :- pi d\ let-lb L1 [pr d T|Acc] (B d) C.
+let-lb L1 Acc (linA.lend E2) C :-
+  std.rev Acc Ds, unzip E2 R2, plug R2 (llet-k L1 Ds) C.
+
+func llet-k lexpr, list (pair lin ty), nexpr, lexpr -> ctx.
+llet-k L1 Ds N2 L2 (hole N2 L) :- rebind Ds L2 LB, mk-llet L1 LB L.
+
+% let (;) = (;) in E is just E, and let (;) = (;) in ė is just ė: both are
+% left out (they cost nothing).
+func mk-clet nexpr, nabs ctx -> ctx.
+mk-clet (linB.ret []) (linB.nend C) C :- !.
+mk-clet N B (clet N B).
+
+func mk-llet lexpr, labs lexpr -> lexpr.
+mk-llet (lret []) (linB.lend L) L :- !.
+mk-llet L1 LB (llet L1 LB).
+
+% UUnpack: let (⊗w:⊗τ ;) = v in E ; e' ; ė'.
+func unpack-nb linA.nbind linA.expr -> nabs ctx.
+unpack-nb (linA.nb T B) (linB.nb T B') :- pi x\ unpack-nb (B x) (B' x).
+unpack-nb (linA.nend (linA.lend E)) (linB.nend R) :- unzip E R.
+
+% ULinUnpack: E ; e' ; let (; ⊗ẇ:⊗τ̇) = v̇ in ė'.
+func lunpack-lb lin, linA.lbind linA.expr, list (pair lin ty) -> ctx.
+lunpack-lb D (linA.lb T B) Acc R :- pi d\ lunpack-lb D (B d) [pr d T|Acc] R.
+lunpack-lb D (linA.lend E) Acc R :-
+  std.rev Acc Ds, unzip E R0, plug R0 (lunpack-k D Ds) R.
+
+func lunpack-k lin, list (pair lin ty), nexpr, lexpr -> ctx.
+lunpack-k D Ds N L (hole N (linB.lunpack D LB)) :- rebind Ds L LB.
+
+% UApp: let (u:τ, w:⊗π ;) = f.nonlin(v ;) in □ ; (u ;) ; f.lin(w ; v̇).
+func app-spine ty, lfn, list lin, list ty, list nl -> nabs ctx.
+app-spine TT FL Ls [] Acc
+    (linB.nb TT w\ linB.nend (hole (linB.ret Us) (lapp FL [w] Ls))) :-
+  std.rev Acc Us.
+app-spine TT FL Ls [S|Ss] Acc (linB.nb S B) :-
+  pi u\ app-spine TT FL Ls Ss [u|Acc] (B u).
+
+% UDrop: E ; drop(e') ; drop(ė').
+func drop-k nexpr, lexpr -> ctx.
+drop-k N L (hole (linB.drop N) (ldrop L)).
+
+% --- U on definitions (UDef) ----------------------------------------------------
+%
+%   def f(v:τ ; v̇:τ̇) -> (σ ; σ̇) = e
+%   ⇝ def f.nonlin(v:τ ;) -> (σ, ⊗π ;) = E(e', ⊗(w))
+%     def f.lin(u:⊗π ; v̇:τ̇) -> (; σ̇) = let (⊗w:⊗π ;) = u in ė'
+% where w:π are the variables bound by v and E that ė' reads (the tape).
+
+func unzip-def linA.nbind fbody
+  -> nabs nfbody, nabs (labs lfbody), list ty, ty.
+unzip-def D ND LD Ss (tup Pis) :- def-nb [] D ND LD Ss Pis.
+
+% G holds the non-linear variables bound so far (v, then E), reversed.
+func def-nb list (pair nl ty), linA.nbind fbody
+  -> nabs nfbody, nabs (labs lfbody), list ty, list ty.
+def-nb G (linA.nb T B) (linB.nb T B') LD Ss Pis :-
+  pi x\ def-nb [pr x T|G] (B x) (B' x) LD Ss Pis.
+def-nb G (linA.nend LB) (linB.nend NB) LD Ss Pis :-
+  def-lb G [] LB NB LD Ss Pis.
+
+func def-lb list (pair nl ty), list (pair lin ty), linA.lbind fbody
+  -> nfbody, nabs (labs lfbody), list ty, list ty.
+def-lb G Acc (linA.lb T B) NB LD Ss Pis :-
+  pi d\ def-lb G [pr d T|Acc] (B d) NB LD Ss Pis.
+def-lb G Acc (linA.lend (body Ss LSs E)) (nbody Ss' NE) LD Ss Pis :-
+  std.rev Acc Ds, unzip E R,
+  ctx->nexpr (def-hole Ss LSs Ds LD Pis) G R NE,
+  std.append Ss [tup Pis] Ss'.
+
+% Turn E into a non-linear expression, extending G with E's binders; at the
+% hole, K builds the end of f.nonlin (and, as a side output, f.lin).
+func ctx->nexpr (func list (pair nl ty), nexpr, lexpr -> nexpr),
+  list (pair nl ty), ctx -> nexpr.
+ctx->nexpr K G (hole N L) NE :- std.rev G G', K G' N L NE.
+ctx->nexpr K G (clet E B) (linB.let E B') :- ctx-nabs K G B B'.
+ctx->nexpr K G (cunpack V B) (linB.unpack V B') :- ctx-nabs K G B B'.
+
+func ctx-nabs (func list (pair nl ty), nexpr, lexpr -> nexpr),
+  list (pair nl ty), nabs ctx -> nabs nexpr.
+ctx-nabs K G (linB.nb T B) (linB.nb T B') :-
+  pi x\ ctx-nabs K [pr x T|G] (B x) (B' x).
+ctx-nabs K G (linB.nend C) (linB.nend NE) :- ctx->nexpr K G C NE.
+
+% At the hole: W, the tape, is the part of G that ė' reads. f.nonlin ends
+% by returning e' and ⊗(W); f.lin unpacks W from its first argument.
+func def-hole list ty, list ty, list (pair lin ty), nabs (labs lfbody),
+  list ty, list (pair nl ty), nexpr, lexpr -> nexpr.
+def-hole Ss LSs Ds LD Pis G N L NE :-
+  locc L Occ, std.filter G (tape-var Occ) W,
+  std.map W pair-snd Pis', std.map W pair-fst Ws,
+  tape-tail Ss Ws Pis' N NE,
+  (pi u\ flin-lins u W LSs L Ds (LB u)),
+  Pis = Pis', LD = linB.nb (tup Pis') (u\ linB.nend (LB u)).
+
+func tape-var list nl, pair nl ty.
+tape-var Occ (pr X _) :- std.mem! Occ X.
+
+func pair-fst pair A B -> A.
+pair-fst (pr A _) A.
+
+func pair-snd pair A B -> B.
+pair-snd (pr _ B) B.
+
+% E(e', ⊗(w)): let (t:⊗π ;) = ⊗(w) in (e' results, t ;). When e' is
+% already (v ;), its results are used directly.
+func tape-tail list ty, list nl, list ty, nexpr -> nexpr.
+tape-tail _ Ws Pis (linB.ret Vs)
+    (linB.let (leaf (tuple Ws)) (linB.nb (tup Pis) t\ linB.nend (linB.ret (Vs' t)))) :- !,
+  pi t\ std.append Vs [t] (Vs' t).
+tape-tail Ss Ws Pis N (linB.let N B) :- res-spine Ws Pis Ss [] B.
+
+func res-spine list nl, list ty, list ty, list nl -> nabs nexpr.
+res-spine Ws Pis [] Acc
+    (linB.nend (linB.let (leaf (tuple Ws))
+      (linB.nb (tup Pis) t\ linB.nend (linB.ret (Rs t))))) :-
+  std.rev Acc Rs0, pi t\ std.append Rs0 [t] (Rs t).
+res-spine Ws Pis [S|Ss] Acc (linB.nb S B) :-
+  pi r\ res-spine Ws Pis Ss [r|Acc] (B r).
+
+% f.lin: the linear parameters (renamed), then let (⊗w ;) = u in ė'.
+func flin-lins nl, list (pair nl ty), list ty, lexpr, list (pair lin ty)
+  -> labs lfbody.
+flin-lins U W LSs L [] (linB.lend (lbody LSs (nunpack U NB))) :- flin-tape L W NB.
+flin-lins U W LSs L [pr D T|Ds] (linB.lb T B) :-
+  pi d\ cp-lin D d =!=> flin-lins U W LSs L Ds (B d).
+
+func flin-tape lexpr, list (pair nl ty) -> nabs lexpr.
+flin-tape L [] (linB.nend L') :- cp-lexpr L L'.
+flin-tape L [pr X T|W] (linB.nb T B) :- pi w\ cp-nl X w =!=> flin-tape L W (B w).
+
+% --- U on programs ---------------------------------------------------------------
+%
+% Each definition f becomes f.nonlin then f.lin; calls to f are unzipped
+% by UApp into calls to both.
+
+func unzip-prog linA.prog -> linB.prog.
+unzip-prog linA.pnil linB.pnil.
+unzip-prog (linA.def D P) (ndef ND fn\ ldef LD fl\ P' fn fl) :-
+  unzip-def D ND LD Ss TT,
+  pi f\ pi fn\ pi fl\ ufn f fn fl Ss TT ==> unzip-prog (P f) (P' fn fl).
+
+} % namespace unzip

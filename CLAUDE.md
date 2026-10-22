@@ -6,19 +6,28 @@ README.md for the papers, the design, and the full list of predicates.
 ## Checking changes
 
 ```
-elpi -test linear_a.elpi
+elpi -test main.elpi
 ```
 
 This must exit 0 and print no `FAILED:` line. It needs Elpi 3.8 or later.
 
 ## Layout
 
-Each part of `linear_a.elpi` is in its own namespace: `linA` (syntax),
-`typecheck`, `eval`, `forward`, `erase`, `pp`, `linB`, `unzip`, `example`,
-`exampleB` and `test`. New code goes in a new or matching namespace. A
-namespace starts with `shorten linA.{…}` for the names it uses. Don't shorten
-`sin`, `cos` or `exp` in a namespace that uses them with `is`, because the
-shortened name hides the builtin; write `linA.sin` there instead.
+One file per language (`linA.elpi`, `linB.elpi`), one per transformation
+(`forward.elpi` J, `erase.elpi` L, `unzip.elpi` U, `transpose.elpi` T), one
+per utility (`lincheckA.elpi`, `evalA.elpi`, `ppA.elpi`, `ppB.elpi`), plus
+`examples.elpi`, `test.elpi`, and `main.elpi`. Each file accumulates the
+files it uses, right after its header comment; Elpi loads a file only once,
+however many files accumulate it. A new file's tests go in `test.elpi` and
+are called from `main`.
+
+Each file holds one namespace, named after the file (`examples.elpi` holds
+`example` and `exampleB`; `main.elpi` holds `running`). A namespace starts
+with `shorten` for the names it uses. Don't shorten `sin`, `cos` or `exp` in
+a namespace that uses them with `is`, because the shortened name hides the
+builtin; write `linA.sin` there instead. `linA` and `linB` share names such
+as `ret` and `let`, so a namespace that uses both shortens neither and
+writes `linA.ret` / `linB.ret`.
 
 ## Elpi style
 

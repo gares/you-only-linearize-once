@@ -1,0 +1,247 @@
+% Tests
+%
+% The checks run by main.
+
+accumulate linA.
+accumulate linB.
+accumulate lincheckA.
+accumulate evalA.
+accumulate ppA.
+accumulate ppB.
+accumulate examples.
+accumulate forward.
+accumulate erase.
+accumulate unzip.
+accumulate transpose.
+
+% ---------------------------------------------------------------------------
+% Tests
+% ---------------------------------------------------------------------------
+
+namespace test {
+
+shorten linA.{ r, tup, real, vtup, def, pnil }.
+shorten lincheckA.{ of-def, of-prog }.
+shorten evalA.{ run, run-def }.
+shorten ppA.{ prog->string, def->string }.
+
+% Values equal up to 1e-9.
+func approx linA.val, linA.val.
+approx (real A) (real B) :- D is A - B, D < 0.000000001, D > -0.000000001.
+approx (vtup Xs) (vtup Ys) :- std.forall2 Xs Ys approx.
+
+func approx-list list linA.val, list linA.val.
+approx-list Xs Ys :- std.forall2 Xs Ys approx.
+
+func check string, (func).
+check Msg G :- G, !, print "ok:" Msg.
+check Msg _ :- print "FAILED:" Msg, fail.
+
+func linA-tests.
+linA-tests :-
+  example.g G, of-def G Ts LTs Ss LSs,
+  print "g :" Ts LTs "->" Ss LSs,
+  example.drop-dup D, of-def D _ _ _ _, print "drop/dup example: ok",
+  example.bad-twice B1, not (of-def B1 _ _ _ _), print "linear var used twice: rejected",
+  example.bad-unused B2, not (of-def B2 _ _ _ _), print "unused non-linear var: rejected",
+  example.swap U, of-def U _ _ _ _, print "unpack example: ok",
+  example.g-prog P, of-prog P, print "program: ok",
+  run P [real 3.0] [real 1.0] O1 L1 C1, print "run g(3 ; 1) =" O1 L1 "cost" C1,
+  example.dsin S, of-def S _ _ _ _,
+  run-def S [real 0.0] [real 2.0] O2 L2 C2, print "run dsin(0 ; 2) =" O2 L2 "cost" C2,
+  run-def D [real 5.0] [real 7.0] O3 L3 C3, print "run drop/dup(5 ; 7) =" O3 L3 "cost" C3,
+  run-def U [vtup [real 1.0, real 2.0]] [vtup [real 3.0, real 4.0]] O4 L4 C4,
+  print "run swap((1,2) ; (3,4)) =" O4 L4 "cost" C4,
+  print "",
+  prog->string P SP, print SP, print "",
+  def->string S SS, print SS, print "",
+  def->string D SD, print SD, print "",
+  def->string U SU, print SU.
+
+func forward-tests.
+forward-tests :-
+  print "--- forward derivative J (forward.dj) ---",
+  % sq: (x*x ; 2x ẋ), and x*x needs a dup of ẋ
+  example.sq Sq, forward.dj-def Sq SqJ,
+  def->string SqJ SSq, print SSq,
+  check "sq^J type-checks" (of-def SqJ [r] [r] [r] [r]),
+  run-def Sq [real 3.0] [] _ _ C0,
+  run-def SqJ [real 3.0] [real 1.0] O1 L1 C1,
+  print "sq^J(3 ; 1) =" O1 L1 "cost" C1 "(primal cost" C0 ")",
+  check "sq^J(3 ; 1) = (9 ; 6)"
+    (approx-list O1 [real 9.0], approx-list L1 [real 6.0]),
+  % h: x shared between the bound expression and the body of a let
+  example.h H, forward.dj-def H HJ,
+  def->string HJ SH, print SH,
+  check "h^J type-checks" (of-def HJ [r] [r] [r] [r]),
+  X = 0.5, run-def HJ [real X] [real 1.0] O2 L2 C2,
+  run-def H [real X] [] _ _ C2p,
+  print "h^J(0.5 ; 1) =" O2 L2 "cost" C2 "(primal cost" C2p ")",
+  P is X * sin X, Y is exp P, DY is Y * (sin X + X * cos X),
+  check "h^J(0.5 ; 1) = (h(0.5) ; h'(0.5))"
+    (approx-list O2 [real Y], approx-list L2 [real DY]),
+  % m: tuples, unpacking a variable that is used again, literals
+  example.m M, forward.dj-def M MJ,
+  def->string MJ SM, print SM,
+  check "m^J type-checks"
+    (of-def MJ [tup [r,r]] [tup [r,r]] [r, tup [r,r]] [r, tup [r,r]]),
+  run-def MJ [vtup [real 2.0, real 3.0]] [vtup [real 1.0, real 0.0]] O3 L3 C3,
+  print "m^J((2,3) ; (1,0)) =" O3 L3 "cost" C3,
+  check "m^J((2,3) ; (1,0)) = (12, (2,3) ; 6, (1,0))"
+    (approx-list O3 [real 12.0, vtup [real 2.0, real 3.0]],
+     approx-list L3 [real 6.0, vtup [real 1.0, real 0.0]]),
+  % a program: calls to sq become calls to sq^J
+  example.k-prog PP, forward.dj-prog PP PJ,
+  prog->string PJ SP, print SP,
+  check "program^J type-checks" (of-prog PJ),
+  run PJ [real 3.0] [real 1.0] O4 L4 C4,
+  print "k^J(3 ; 1) =" O4 L4 "cost" C4,
+  check "k^J(3 ; 1) = (12 ; 7)"
+    (approx-list O4 [real 12.0], approx-list L4 [real 7.0]),
+  check "dj rejects linear input" (not (example.g G, forward.dj-def G _)).
+
+func erase-tests.
+erase-tests :-
+  print "--- linearity erasure L (erase.lerase-prog) ---",
+  % L(J(k))(x, 1 ;) computes k and its derivative with no linear code
+  example.k-prog PP, forward.dj-prog PP PJ, erase.lerase-prog PJ PE,
+  prog->string PE SE, print SE,
+  check "L(k^J) type-checks" (of-prog PE),
+  run PJ [real 3.0] [real 1.0] _ _ CJ,
+  run PE [real 3.0, real 1.0] [] O1 L1 CE,
+  print "L(k^J)(3, 1 ;) =" O1 L1 "cost" CE,
+  check "L(k^J)(3, 1 ;) = (12, 7 ;)" (approx-list O1 [real 12.0, real 7.0], L1 = []),
+  check "L preserves cost on k^J" (CJ = CE),
+  % g: linear * becomes a call to a fresh mul function
+  example.g-prog G, erase.lerase-prog G GE,
+  prog->string GE SG, print SG,
+  check "L(g) type-checks" (of-prog GE),
+  run G [real 3.0] [real 1.0] _ _ CG, run GE [real 3.0, real 1.0] [] O2 _ CGE,
+  check "L(g)(3, 1 ;) = (9, 9 ;) with the same cost"
+    (approx-list O2 [real 9.0, real 9.0], CG = CGE),
+  % dup disappears, lunpack becomes unpack
+  example.drop-dup D, erase.lerase-prog (def D x\ pnil) DE,
+  prog->string DE SD, print SD,
+  check "L(drop/dup) type-checks" (of-prog DE),
+  example.swap U, erase.lerase-prog (def U x\ pnil) UE,
+  prog->string UE SU, print SU,
+  check "L(swap) type-checks" (of-prog UE),
+  run UE [vtup [real 1.0, real 2.0], vtup [real 3.0, real 4.0]] [] O3 _ _,
+  check "L(swap) swaps"
+    (approx-list O3 [real 2.0, real 1.0, real 4.0, real 3.0]),
+  % + , * and 0̇ on tuples: the helper functions recurse on components
+  example.lin-tup T, erase.lerase-prog (def T x\ pnil) TE,
+  prog->string TE ST, print ST,
+  check "L(lt) type-checks" (of-prog TE),
+  run (def T x\ pnil) [] [vtup [real 1.0, real 2.0]] _ L4 C4,
+  run TE [vtup [real 1.0, real 2.0]] [] O4 _ C4E,
+  print "lt(; (1,2)) =" L4 "cost" C4 "  L(lt)((1,2) ;) =" O4 "cost" C4E,
+  check "L(lt) computes the same result with the same cost"
+    (approx-list O4 L4, C4 = C4E).
+
+func linB-tests.
+linB-tests :-
+  print "--- Linear B (linB) ---",
+  % the unzipped dsin of Figure 9, through the inclusion in Linear A
+  exampleB.dsin-unzipped B, linB.to-linA B A,
+  prog->string A SA, print SA,
+  check "unzipped dsin type-checks in Linear A" (of-prog A),
+  exampleB.dsin-nonlin N, linB.to-linA (linB.ndef N _\ linB.pnil) AN,
+  run AN [real 0.5] [] O1 _ C1,
+  print "dsin.nonlin(0.5 ;) =" O1 "cost" C1,
+  O1 = [S, Tape],
+  run A [Tape] [real 2.0] _ L2 C2,
+  print "dsin.lin(tape ; 2) =" L2 "cost" C2,
+  example.dsin D, run-def D [real 0.5] [real 2.0] O3 L3 _,
+  check "nonlin then lin computes dsin(0.5 ; 2)"
+    (approx-list [S] O3, approx-list L2 L3),
+  % a linear leaf where a non-linear one is expected is rejected
+  check "a linear leaf in a non-linear expression is rejected"
+    (pi d\ not (linB.nexpr->A (linB.leaf (linA.lvar d)) _)),
+  check "a non-linear leaf in a linear expression is rejected"
+    (pi x\ not (linB.lexpr->A (linB.lleaf (linA.sin x)) _)).
+
+% Drop the last definition of a program (the f.lin of the entry point), so
+% that the last one left, f.nonlin, becomes the entry point.
+func drop-last linA.prog -> linA.prog.
+drop-last (def _ (x\ pnil)) pnil :- !.
+drop-last (def D P) (def D P') :- pi f\ drop-last (P f) (P' f).
+
+% Unzip J(P), and check Theorem 6.2 on it: U(J(P)) type-checks, and running
+% f.nonlin(x ;) and then f.lin(tape ; ẋ) gives the results and the cost of
+% J(P)(x ; ẋ).
+func unzip-check string, linA.prog, list linA.val, list linA.val.
+unzip-check Name P Xs LXs :-
+  forward.dj-prog P PJ, unzip.unzip-prog PJ PU, linB.to-linA PU A,
+  prog->string A S, print S,
+  check {calc (Name ^ ": U(J) type-checks")} (of-prog A),
+  run PJ Xs LXs O L C,
+  drop-last A AN, run AN Xs [] ONT _ C1,
+  std.rev ONT [Tape|RO], std.rev RO O',
+  run A [Tape] LXs _ L' C2,
+  print Name "^J: cost" C "  .nonlin: cost" C1 "  .lin: cost" C2,
+  check {calc (Name ^ ": .nonlin then .lin computes J, with the same total cost")}
+    (approx-list O' O, approx-list L' L, C is C1 + C2).
+
+func unzip-tests.
+unzip-tests :-
+  print "--- unzipping U (unzip.unzip-prog) ---",
+  example.sin1 F, forward.dj-prog (def F x\ pnil) FJ, unzip.unzip-prog FJ FU,
+  exampleB.dsin-unzipped FB,
+  check "U(J(sin1)) is the unzipped dsin of Figure 9" (FU = FB),
+  example.sq Sq, unzip-check "sq" (def Sq x\ pnil) [real 3.0] [real 1.0],
+  example.h H, unzip-check "h" (def H x\ pnil) [real 0.5] [real 1.0],
+  example.m M,
+  unzip-check "m" (def M x\ pnil)
+    [vtup [real 2.0, real 3.0]] [vtup [real 1.0, real 0.0]],
+  example.k-prog K, unzip-check "k" K [real 3.0] [real 1.0].
+
+% Dot product of two lists of values of the same shapes.
+func dot list linA.val, list linA.val -> float.
+dot [] [] 0.0.
+dot [X|Xs] [Y|Ys] D :- dot1 X Y D1, dot Xs Ys D2, D is D1 + D2.
+
+func dot1 linA.val, linA.val -> float.
+dot1 (real A) (real B) C :- C is A * B.
+dot1 (vtup Xs) (vtup Ys) C :- dot Xs Ys C.
+
+% Transpose U(J(P)), and check Theorem 7.1 on it, where ė is f.lin and ë is
+% f.lin^T, both at the tape computed by f.nonlin(x ;):
+% T(U(J(P))) type-checks, ⟨ẋ, ë[x; ÿ]⟩ = ⟨ė[x; ẋ], ÿ⟩, and
+% W[ë] + L_in ≤ W[ė] + L_out (L: the number of scalars in ẋ and in ÿ).
+func transpose-check string, linA.prog, list linA.val, list linA.val,
+  list linA.val.
+transpose-check Name P Xs DXs DYs :-
+  forward.dj-prog P PJ, unzip.unzip-prog PJ PU, transpose.transpose-prog PU PT,
+  ppB.tprog->string PT S, print S,
+  linB.to-linA PT AT,
+  check {calc (Name ^ ": T(U(J)) type-checks")} (of-prog AT),
+  linB.to-linA PU AU, drop-last AU AN,
+  run AN Xs [] ONT _ _, std.rev ONT [Tape|_],
+  run AU [Tape] DXs _ Ys CL,
+  run AT [Tape] DYs _ Xbar CT,
+  dot DXs Xbar Lhs, dot Ys DYs Rhs,
+  evalA.scalars-list DXs Lin, evalA.scalars-list DYs Lout,
+  print Name ": <ẋ, ë[x;ÿ]> =" Lhs " <ė[x;ẋ], ÿ> =" Rhs
+    " W[ë] =" CT " W[ė] =" CL " L_in =" Lin " L_out =" Lout,
+  check {calc (Name ^ ": <ẋ, ë[x;ÿ]> = <ė[x;ẋ], ÿ>")}
+    (approx (real Lhs) (real Rhs)),
+  check {calc (Name ^ ": W[ë] + L_in ≤ W[ė] + L_out")}
+    (A is CT + Lin, B is CL + Lout, A =< B).
+
+func transpose-tests.
+transpose-tests :-
+  print "--- transposition T (transpose.transpose-prog) ---",
+  example.neg-sin F,
+  transpose-check "neg-sin" (def F x\ pnil) [real 0.5] [real 1.0] [real 1.0],
+  example.sq Sq,
+  transpose-check "sq" (def Sq x\ pnil) [real 3.0] [real 1.0] [real 1.0],
+  example.h H,
+  transpose-check "h" (def H x\ pnil) [real 0.5] [real 0.7] [real 1.3],
+  example.m M,
+  transpose-check "m" (def M x\ pnil) [vtup [real 2.0, real 3.0]]
+    [vtup [real 1.0, real 0.5]] [real 0.3, vtup [real 0.7, real -1.1]],
+  example.k-prog K,
+  transpose-check "k" K [real 3.0] [real 1.0] [real 2.0].
+
+} % namespace test

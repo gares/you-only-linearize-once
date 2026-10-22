@@ -1,0 +1,132 @@
+% Type checker of Linear A (Figure 4)
+%
+
+accumulate linA.
+
+% ---------------------------------------------------------------------------
+% Type checker (Figure 4)
+% ---------------------------------------------------------------------------
+
+namespace lincheckA {
+
+shorten linA.{
+  ty, r, tup, val, real, vtup, nl, lin, fn, nbind, nb, nend, lbind, lb, lend,
+  expr, ret, let, unpack, lunpack, app, nvar, lit, tuple, plus, mul, lvar,
+  lzero, ltuple, lplus, lmul, dup, drop, fbody, body, prog, def, pnil }.
+shorten linA.{ sin, cos, exp, neg }.
+
+%
+% Γ ; Γ̇ ⊢ e : (τ ; τ̇) is  of E Ts LTs.
+%
+% Each variable in scope carries a usage mark, a fresh unification variable
+% set to `used` when the variable occurs. When a binder goes out of scope we
+% require the mark to be set. Non-linear variables may be marked many times
+% (Γ1 ∪ Γ2: used at least once); linear ones must be unmarked when used
+% (Γ̇1 ⊎ Γ̇2: used exactly once).
+
+data mark.
+symb used mark.
+
+func nlty  nl  -> ty, mark.
+func linty lin -> ty, mark.
+func fnty  fn  -> list ty, list ty, list ty, list ty.
+
+func use-nl nl -> ty.
+use-nl V T :- nlty V T M, M = used.
+
+func use-lin lin -> ty.
+use-lin V T :- linty V T M, var M, M = used.
+
+% Bring the binders into scope, check their types against Ts (non-linear)
+% and LTs (linear), run K on the body, then check every bound variable was
+% used.
+func of-nb nbind A, (func A) -> list ty, list ty.
+of-nb (nend L) K [] LTs :- of-lb L K LTs.
+of-nb (nb T B) K [T|Ts] LTs :-
+  pi x\ nlty x T M ==> of-nb (B x) K Ts LTs, not (var M).
+
+func of-lb lbind A, (func A) -> list ty.
+of-lb (lend X) K [] :- K X.
+of-lb (lb T B) K [T|Ts] :-
+  pi x\ linty x T M ==> of-lb (B x) K Ts, not (var M).
+
+func of expr -> list ty, list ty.
+
+% TypeRet
+of (ret Vs LVs) Ts LTs :-
+  std.map Vs use-nl Ts, std.map LVs use-lin LTs.
+
+% TypeLet
+of (let E1 B) Ss LSs :-
+  of E1 Ts LTs,
+  of-nb B (e2\ of e2 Ss LSs) Ts LTs.
+
+% TypeUnpack
+of (unpack V B) Ss LSs :-
+  use-nl V (tup Ts), of-nb B (e\ of e Ss LSs) Ts [].
+
+% TypeLinUnpack
+of (lunpack V B) Ss LSs :-
+  use-lin V (tup Ts), of-lb B (e\ of e Ss LSs) Ts.
+
+% TypeApp
+of (app F Vs LVs) Ss LSs :-
+  fnty F Ts LTs Ss LSs,
+  std.map Vs use-nl Ts, std.map LVs use-lin LTs.
+
+% TypeVar
+of (nvar V) [T] [] :- use-nl V T.
+
+% TypeLit
+of (lit _) [r] [].
+
+% TypePrim1
+of (sin V) [r] [] :- use-nl V r.
+of (cos V) [r] [] :- use-nl V r.
+of (exp V) [r] [] :- use-nl V r.
+of (neg V) [r] [] :- use-nl V r.
+
+% TypePrim2
+of (plus V1 V2) [r] [] :- use-nl V1 r, use-nl V2 r.
+of (mul  V1 V2) [r] [] :- use-nl V1 r, use-nl V2 r.
+
+% TypeTup
+of (tuple Vs) [tup Ts] [] :- std.map Vs use-nl Ts.
+
+% TypeLinTup
+of (ltuple Vs) [] [tup Ts] :- std.map Vs use-lin Ts.
+
+% TypeLinVar
+of (lvar V) [] [T] :- use-lin V T.
+
+% TypeLinZero
+of (lzero T) [] [T].
+
+% TypeLinPlus
+of (lplus V1 V2) [] [T] :- use-lin V1 T, use-lin V2 T.
+
+% TypeLinMul
+of (lmul V1 V2) [] [T] :- use-nl V1 r, use-lin V2 T.
+
+% TypeDup
+of (dup V) [] [T, T] :- use-lin V T.
+
+% TypeDrop
+of (drop E) [] [] :- of E _ _.
+
+% TypeDef
+func of-def nbind fbody -> list ty, list ty, list ty, list ty.
+of-def D Ts LTs Ss LSs :-
+  of-nb D (b\ of-body b Ss LSs) Ts LTs.
+
+func of-body fbody -> list ty, list ty.
+of-body (body Ss LSs E) Ss LSs :- of E Ss LSs.
+
+% Programs: check each definition, then bring its name into scope.
+func of-prog prog.
+of-prog pnil.
+of-prog (def D P) :-
+  of-def D Ts LTs Ss LSs,
+  pi f\ fnty f Ts LTs Ss LSs ==> of-prog (P f).
+
+} % namespace lincheckA

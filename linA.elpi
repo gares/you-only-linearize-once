@@ -1,0 +1,126 @@
+% Linear A: syntax (Figure 3)
+%
+% Syntax of Linear A in HOAS, and its free-variable helpers.
+
+% ---------------------------------------------------------------------------
+% Syntax of Linear A (Figure 3)
+% ---------------------------------------------------------------------------
+
+namespace linA {
+
+% Types
+data ty.
+symb r   ty.                 % real scalar
+symb tup list ty -> ty.      % tuple type ⊗τ
+
+% Values (extralinguistic ground constants, used only by the semantics)
+data val.
+symb real float -> val.
+symb vtup list val -> val.
+
+% Variables. Linear A is in A-normal form: arguments are always variables.
+% Non-linear and linear variables live in separate syntactic classes.
+data nl.  % u, v, w, z
+data lin.  % u̇, v̇, ẇ, ż
+data fn.  % function names
+
+% Binders. Every binding site binds some non-linear variables followed by
+% some linear ones, so a non-linear spine (nbind) ends in a linear spine
+% (lbind), which ends in a body of type A. Each binder carries its type.
+data nbind A.
+symb nb   ty -> (nl -> nbind A) -> nbind A.
+symb nend lbind A -> nbind A.
+
+data lbind A.
+symb lb   ty -> (lin -> lbind A) -> lbind A.
+symb lend A -> lbind A.
+
+% Expressions
+data expr.
+% m,n-ary expressions
+symb ret     list nl -> list lin -> expr.            % (v ; v̇)
+symb let     expr -> nbind expr -> expr.              % let (v:τ ; v̇:τ̇) = e in e'
+symb unpack  nl -> nbind expr -> expr.               % let (⊗w:⊗τ ;) = v in e, no linear binders
+symb lunpack lin -> lbind expr -> expr.              % let (; ⊗ẇ:⊗τ̇) = v̇ in e
+symb app     fn -> list nl -> list lin -> expr.      % f(v ; v̇)
+% e^{1,0}: non-linear fragment
+symb nvar  nl -> expr.                               % variable
+symb lit   float -> expr.                            % literal l ∈ R
+symb tuple list nl -> expr.                          % ⊗(v)
+symb sin, cos, exp nl -> expr.                       % unary primitives
+symb neg  nl -> expr.                                % −v
+symb plus, mul     nl -> nl -> expr.                 % binary primitives
+% e^{0,1}: linear fragment
+symb lvar   lin -> expr.                             % linear variable
+symb lzero  ty -> expr.                              % 0̇_τ̇
+symb ltuple list lin -> expr.                        % ⊗(v̇)
+symb lplus  lin -> lin -> expr.                      % v̇1 + v̇2
+symb lmul   nl -> lin -> expr.                       % v * v̇
+% e^{0,2} and e^{0,0}
+symb dup  lin -> expr.                               % dup(v̇)
+symb drop expr -> expr.                              % drop(e)
+
+% Definitions: def f(v:τ ; v̇:τ̇) -> (σ ; σ̇) = e
+data fbody.
+symb body list ty -> list ty -> expr -> fbody.       % return types σ, σ̇ and e
+
+% Programs: a function name is bound only after its definition, so HOAS
+% scoping rules out recursion.
+data prog.
+symb def  nbind fbody -> (fn -> prog) -> prog.
+symb pnil prog.
+
+% --- Free non-linear variables (used by J and U) -------------------------------
+
+% occ E Vs: the non-linear variables occurring free in E, with repetitions.
+func occ expr -> list nl.
+occ (ret Vs _) Vs.
+occ (let E B) L :- occ E L1, occ-nb B L2, std.append L1 L2 L.
+occ (unpack V B) [V|L] :- occ-nb B L.
+occ (lunpack _ B) L :- occ-lb B L.
+occ (app _ Vs _) Vs.
+occ (nvar V) [V].
+occ (lit _) [].
+occ (tuple Vs) Vs.
+occ (sin V) [V].
+occ (cos V) [V].
+occ (exp V) [V].
+occ (neg V) [V].
+occ (plus V1 V2) [V1, V2].
+occ (mul V1 V2) [V1, V2].
+occ (lvar _) [].
+occ (lzero _) [].
+occ (ltuple _) [].
+occ (lplus _ _) [].
+occ (lmul V _) [V].
+occ (dup _) [].
+occ (drop E) L :- occ E L.
+
+func occ-nb nbind expr -> list nl.
+occ-nb (nb _ B) L :- pi x\ occ-under x (B x) L.
+occ-nb (nend LB) L :- occ-lb LB L.
+
+% Called under pi x, so L0 may mention x before x is filtered out.
+func occ-under nl, nbind expr -> list nl.
+occ-under X B L :- occ-nb B L0, std.filter L0 (y\ not (y = X)) L.
+
+func occ-lb lbind expr -> list nl.
+occ-lb (lb _ B) L :- pi x\ occ-lb (B x) L.
+occ-lb (lend E) L :- occ E L.
+
+% Remove duplicates, keeping the first occurrence.
+func uniq list nl -> list nl.
+uniq L R :- uniq-acc L [] R.
+
+func uniq-acc list nl, list nl -> list nl.
+uniq-acc [] Acc R :- std.rev Acc R.
+uniq-acc [X|Xs] Acc R :- std.mem! Acc X, !, uniq-acc Xs Acc R.
+uniq-acc [X|Xs] Acc R :- uniq-acc Xs [X|Acc] R.
+
+func fv expr -> list nl.
+fv E L :- occ E L0, uniq L0 L.
+
+func fv-nb nbind expr -> list nl.
+fv-nb B L :- occ-nb B L0, uniq L0 L.
+
+} % namespace linA

@@ -1,0 +1,207 @@
+% Transformation J: forward-mode differentiation (Section 5, Figure 7)
+%
+% Linear A (non-linear fragment) to Linear A.
+
+accumulate linA.
+
+% ---------------------------------------------------------------------------
+% Forward-mode differentiation J (Section 5, Figure 7)
+% ---------------------------------------------------------------------------
+
+namespace forward {
+
+shorten linA.{
+  ty, r, tup, val, real, vtup, nl, lin, fn, nbind, nb, nend, lbind, lb, lend,
+  expr, ret, let, unpack, lunpack, app, nvar, lit, tuple, plus, mul, lvar,
+  lzero, ltuple, lplus, lmul, dup, drop, fbody, body, prog, def, pnil }.
+shorten linA.{ sin, cos, exp, neg }.
+shorten linA.{ fv, fv-nb }.
+
+%
+% dj E E' is J(Σ | e) ⇝ e'. The input E is in the non-linear fragment.
+% Σ is not an argument: it lives in the context, as one hypothetical clause
+% dot x ẋ T per primal variable x in scope (tangent ẋ, type T). Extending Σ
+% (x ↦ ẋ) is loading a clause with =!=>, which puts it in front of the older
+% ones and adds a cut at the end of its body: a newer clause for the same x
+% shadows the older one, and dot returns only the newest tangent.
+%
+% Each tangent is used exactly once in E'. When a primal variable is needed
+% more than once, its tangent is duplicated with dup, and the copies are
+% loaded as newer dot clauses for the parts of E that use them. dup-each
+% does the u ↦ ẇ, ż split of JLet and JUnpackB (one dup per shared u, two
+% fresh tangents); with-tans does the dup variants of JRet, JApp, JTup and
+% JPrimMul that the paper leaves out (repeated arguments, as in x * x).
+% Variables used in only one part keep their tangent, so Σ1 and Σ2 of JLet
+% need not be computed.
+% The result is in A-normal form: the compound tangent expressions of
+% Figure 7 are let-bound.
+
+func dot nl -> lin, ty.    % x ↦ ẋ : T, loaded in the context
+func fnj fn -> fn.        % f ↦ f^J
+
+% with-dot Vs Ls G: run G with each V in Vs mapped to the matching L.
+func with-dot list nl, list lin, (func).
+with-dot [] [] G :- G.
+with-dot [V|Vs] [L|Ls] G :- dot V _ T, (dot V L T =!=> with-dot Vs Ls G).
+
+% with-tans Vs K E: one tangent per occurrence in Vs, given to K. A
+% variable that occurs again later gets its tangent dup-ed: the first copy
+% is used here, the second becomes its tangent for the rest of Vs.
+func with-tans list nl, (func list lin -> expr) -> expr.
+with-tans Vs K E :- with-tans-acc Vs [] K E.
+
+% Acc holds the tangents chosen so far, in reverse order.
+func with-tans-acc list nl, list lin, (func list lin -> expr) -> expr.
+with-tans-acc [] Acc K E :- std.rev Acc Ls, K Ls E.
+with-tans-acc [V|Vs] Acc K (let (dup L) (nend (lb T a\ lb T b\ lend (E a b)))) :-
+  dot V L T, std.mem! Vs V, !,
+  pi a\ pi b\ dot V b T =!=> with-tans-acc Vs [a|Acc] K (E a b).
+with-tans-acc [V|Vs] Acc K E :- dot V L _, with-tans-acc Vs [L|Acc] K E.
+
+% Copy a binder spine of non-linear binders (with an empty linear spine),
+% handing the bound variables and their types to K, which builds the new
+% linear spine.
+func copy-nb nbind A, list (pair nl ty), (func A, list (pair nl ty) -> lbind A)
+  -> nbind A.
+copy-nb (nb T B) Acc K (nb T B') :- pi x\ copy-nb (B x) [pr x T|Acc] K (B' x).
+copy-nb (nend (lend X)) Acc K (nend L) :- std.rev Acc Xs, K X Xs L.
+
+% Bind one tangent per variable in Xs, extend Σ, then build the body.
+func mk-lb list (pair nl ty), (func -> A) -> lbind A.
+mk-lb [] K (lend X) :- K X.
+mk-lb [pr V T|Xs] K (lb T B) :- pi d\ dot V d T =!=> mk-lb Xs K (B d).
+
+% dup-each Us K E: for each u in Us, let (; ẇ, ż) = dup(u̇) in …, with ẇ and
+% ż fresh; K gets the list of the ẇs and the list of the żs.
+func dup-each list nl, (func list lin, list lin -> expr) -> expr.
+dup-each Us K E :- dup-each-acc Us [] [] K E.
+
+% Ws and Zs hold the ẇs and żs made so far, in reverse order.
+func dup-each-acc list nl, list lin, list lin, (func list lin, list lin -> expr)
+  -> expr.
+dup-each-acc [] Ws Zs K E :- std.rev Ws Ws', std.rev Zs Zs', K Ws' Zs' E.
+dup-each-acc [U|Us] Ws Zs K (let (dup L) (nend (lb T w\ lb T z\ lend (E w z)))) :-
+  dot U L T, pi w\ pi z\ dup-each-acc Us [w|Ws] [z|Zs] K (E w z).
+
+% Variables in both lists.
+func shared list nl, list nl -> list nl.
+shared F1 F2 Us :- std.filter F1 (v\ std.mem! F2 v) Us.
+
+func dj expr -> expr.
+% JRet
+dj (ret Vs []) E :- with-tans Vs (Ls\ R\ R = ret Vs Ls) E.
+% JLet: u ranges over the variables free in both e1 and e2
+dj (let E1 B) E :-
+  fv E1 F1, fv-nb B F2, shared F1 F2 Us,
+  dup-each Us (dj-let Us E1 B) E.
+% JUnpackA (v not free in e) / JUnpackB (v free in e: its tangent is dup-ed)
+dj (unpack V B) E :-
+  fv-nb B F2, shared [V] F2 Us,
+  dup-each Us (dj-unpack V Us B) E.
+% JApp
+dj (app F Vs []) E :- fnj F FJ, with-tans Vs (Ls\ R\ R = app FJ Vs Ls) E.
+% JVar
+dj (nvar V) E :- with-tans [V] (Ls\ R\ R = ret [V] Ls) E.
+% JLit
+dj (lit F) (let (lit F) (nb r p\ nend (lend
+           (let (lzero r) (nend (lb r z\ lend
+           (ret [p] [z]))))))).
+% JTup
+dj (tuple Vs) E :-
+  std.map Vs (v\ t\ dot v _ t) Ts,
+  with-tans Vs (dj-tuple Vs Ts) E.
+% JPrimSin, and the analogous rules for cos, exp, −, + and *
+dj (sin V) E :- with-tans [V] (dj-sin V) E.
+dj (cos V) E :- with-tans [V] (dj-cos V) E.
+dj (exp V) E :- with-tans [V] (dj-exp V) E.
+dj (neg V) E :- with-tans [V] (dj-neg V) E.
+dj (plus V1 V2) E :- with-tans [V1, V2] (dj-plus V1 V2) E.
+dj (mul V1 V2) E :- with-tans [V1, V2] (dj-mul V1 V2) E.
+% JDrop
+dj (drop E) (drop E') :- dj E E'.
+
+% e1 runs under u ↦ ẇ, e2 under u ↦ ż, for each shared u.
+func dj-let list nl, expr, nbind expr, list lin, list lin -> expr.
+dj-let Us E1 B Ws Zs (let E1' B') :-
+  with-dot Us Ws (dj E1 E1'),
+  with-dot Us Zs (copy-nb B [] (E2\ Xs\ L\ mk-lb Xs (dj E2) L) B').
+
+% Us is [V] when V is free in the body (JUnpackB), [] otherwise (JUnpackA).
+% The unpack itself uses the first copy of v̇, the body the second.
+func dj-unpack nl, list nl, nbind expr, list lin, list lin -> expr.
+dj-unpack V Us B Ws Zs (unpack V B') :-
+  with-dot Us Ws (dot V DV _),
+  with-dot Us Zs (copy-nb B [] (dj-lunpack DV) B').
+
+func dj-lunpack lin, expr, list (pair nl ty) -> lbind expr.
+dj-lunpack DV E Xs (lend (lunpack DV LB)) :- mk-lb Xs (dj E) LB.
+
+func dj-tuple list nl, list ty, list lin -> expr.
+dj-tuple Vs Ts Ls
+  (let (tuple Vs) (nb (tup Ts) t\ nend (lend
+  (let (ltuple Ls) (nend (lb (tup Ts) dt\ lend
+  (ret [t] [dt]))))))).
+
+% (sin v ; cos v * v̇)
+func dj-sin nl, list lin -> expr.
+dj-sin V [D]
+  (let (sin V) (nb r s\ nend (lend
+  (let (cos V) (nb r c\ nend (lend
+  (let (lmul c D) (nend (lb r t\ lend
+  (ret [s] [t])))))))))).
+
+% (cos v ; (-1 * sin v) * v̇)
+func dj-cos nl, list lin -> expr.
+dj-cos V [D]
+  (let (cos V) (nb r c\ nend (lend
+  (let (sin V) (nb r s\ nend (lend
+  (let (lit -1.0) (nb r m\ nend (lend
+  (let (mul m s) (nb r n\ nend (lend
+  (let (lmul n D) (nend (lb r t\ lend
+  (ret [c] [t])))))))))))))))).
+
+% (exp v ; exp v * v̇)
+func dj-exp nl, list lin -> expr.
+dj-exp V [D]
+  (let (exp V) (nb r e\ nend (lend
+  (let (lmul e D) (nend (lb r t\ lend
+  (ret [e] [t]))))))).
+
+% (−v ; −1.0 * v̇): Linear A has no linear negation, so −v̇ is a scaling.
+func dj-neg nl, list lin -> expr.
+dj-neg V [D]
+  (let (neg V) (nb r w\ nend (lend
+  (let (lit -1.0) (nb r m\ nend (lend
+  (let (lmul m D) (nend (lb r t\ lend
+  (ret [w] [t])))))))))).
+
+% (v1 + v2 ; v̇1 + v̇2)
+func dj-plus nl, nl, list lin -> expr.
+dj-plus V1 V2 [D1, D2]
+  (let (plus V1 V2) (nb r p\ nend (lend
+  (let (lplus D1 D2) (nend (lb r t\ lend
+  (ret [p] [t]))))))).
+
+% JPrimMul: (v1 * v2 ; v1 * v̇2 + v2 * v̇1)
+func dj-mul nl, nl, list lin -> expr.
+dj-mul V1 V2 [D1, D2]
+  (let (mul V1 V2) (nb r p\ nend (lend
+  (let (lmul V1 D2) (nend (lb r a\ lend
+  (let (lmul V2 D1) (nend (lb r b\ lend
+  (let (lplus a b) (nend (lb r t\ lend
+  (ret [p] [t]))))))))))))).
+
+% JDef: def f(v:τ ;) -> (σ ;) = e  ⇝  def f^J(v:τ ; v̇:τ) -> (σ ; σ) = e'
+func dj-def nbind fbody -> nbind fbody.
+dj-def D D' :- copy-nb D [] (B\ Xs\ L\ mk-lb Xs (dj-body B) L) D'.
+
+func dj-body fbody -> fbody.
+dj-body (body Ss [] E) (body Ss Ss E') :- dj E E'.
+
+% Every definition f becomes f^J; calls to f become calls to f^J.
+func dj-prog prog -> prog.
+dj-prog pnil pnil.
+dj-prog (def D P) (def D' P') :-
+  dj-def D D', pi f\ pi fj\ fnj f fj ==> dj-prog (P f) (P' fj).
+
+} % namespace forward

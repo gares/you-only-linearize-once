@@ -1,0 +1,150 @@
+% Linear B: syntax (Section 6, Definition 6.1)
+%
+% Syntax of Linear B, and its inclusion in Linear A.
+
+accumulate linA.
+
+% ---------------------------------------------------------------------------
+% Syntax of Linear B (Section 6, Definition 6.1)
+% ---------------------------------------------------------------------------
+
+namespace linB {
+
+shorten linA.{ ty, nl, lin }.
+
+% Linear B is the sublanguage of Linear A with two restrictions:
+% 1. every function and expression returns only non-linear results or only
+%    linear results, never both;
+% 2. an expression with non-linear results reads no linear variable, not
+%    even to drop it.
+% The syntax enforces both: non-linear expressions (nexpr) and linear
+% expressions (lexpr) are separate kinds, and an nexpr cannot mention a
+% linear variable. Types and variables are those of Linear A. Leaves (the
+% forms with no sub-expressions) are Linear A leaves, wrapped by leaf
+% (non-linear: variable, literal, ⊗(v), primitive) or lleaf (linear: v̇, 0̇,
+% ⊗(v̇), v̇ + v̇, v * v̇, dup(v̇)); to-linA checks that each has the right kind.
+
+data nfn.   % non-linear functions: (v:τ ;) -> (σ ;)
+data lfn.   % linear functions: (v:τ ; v̇:τ̇) -> (; σ̇)
+
+% Binder spines with only non-linear (nabs) or only linear (labs) binders.
+data nabs A.
+symb nb   ty -> (nl -> nabs A) -> nabs A.
+symb nend A -> nabs A.
+
+data labs A.
+symb lb   ty -> (lin -> labs A) -> labs A.
+symb lend A -> labs A.
+
+% Non-linear expressions: results (σ ;), no linear variable anywhere.
+data nexpr.
+symb ret    list nl -> nexpr.                      % (v ;)
+symb let    nexpr -> nabs nexpr -> nexpr.          % let (v:τ ;) = e in e'
+symb unpack nl -> nabs nexpr -> nexpr.             % let (⊗w:⊗τ ;) = v in e
+symb app    nfn -> list nl -> nexpr.               % f(v ;)
+symb drop   nexpr -> nexpr.                        % drop(e)
+symb leaf   linA.expr -> nexpr.                    % non-linear leaf
+
+% Linear expressions: results (; σ̇). They may read non-linear variables, and
+% bind non-linear intermediates computed by an nexpr.
+data lexpr.
+symb lret    list lin -> lexpr.                    % (; v̇)
+symb llet    lexpr -> labs lexpr -> lexpr.         % let (; v̇:τ̇) = ė in ė'
+symb nlet    nexpr -> nabs lexpr -> lexpr.         % let (v:τ ;) = e in ė
+symb lunpack lin -> labs lexpr -> lexpr.           % let (; ⊗ẇ:⊗τ̇) = v̇ in ė
+symb nunpack nl -> nabs lexpr -> lexpr.            % let (⊗w:⊗τ ;) = v in ė
+symb lapp    lfn -> list nl -> list lin -> lexpr.  % f(v ; v̇)
+symb ldrop   lexpr -> lexpr.                       % drop(ė)
+symb lleaf   linA.expr -> lexpr.                   % linear leaf
+
+% Function bodies: return types and expression.
+data nfbody.
+symb nbody list ty -> nexpr -> nfbody.             % (σ ;) = e
+data lfbody.
+symb lbody list ty -> lexpr -> lfbody.             % (; σ̇) = ė
+
+% Programs: as in Linear A, a name is in scope only after its definition.
+data prog.
+symb ndef nabs nfbody -> (nfn -> prog) -> prog.         % def f(v:τ ;) -> (σ ;)
+symb ldef nabs (labs lfbody) -> (lfn -> prog) -> prog.  % def f(v:τ ; v̇:τ̇) -> (; σ̇)
+symb pnil prog.
+
+% --- Inclusion in Linear A ----------------------------------------------------
+%
+% Linear B is a sublanguage of Linear A, and to-linA is the inclusion (it
+% fails on a leaf of the wrong kind). Through it, Linear B programs are
+% type-checked with lincheckA.of-prog, run with evalA.run, and printed with
+% ppA.prog->string.
+
+func nfn->A nfn -> linA.fn.
+func lfn->A lfn -> linA.fn.
+
+func nleaf linA.expr.
+nleaf (linA.nvar _).
+nleaf (linA.lit _).
+nleaf (linA.tuple _).
+nleaf (linA.sin _).
+nleaf (linA.cos _).
+nleaf (linA.exp _).
+nleaf (linA.neg _).
+nleaf (linA.plus _ _).
+nleaf (linA.mul _ _).
+
+func lleaf? linA.expr.
+lleaf? (linA.lvar _).
+lleaf? (linA.lzero _).
+lleaf? (linA.ltuple _).
+lleaf? (linA.lplus _ _).
+lleaf? (linA.lmul _ _).
+lleaf? (linA.dup _).
+
+% Spines: K turns the body into what follows the binders.
+func nabs->A (func A -> linA.lbind B), nabs A -> linA.nbind B.
+nabs->A K (nb T B) (linA.nb T B') :- pi x\ nabs->A K (B x) (B' x).
+nabs->A K (nend X) (linA.nend L) :- K X L.
+
+func labs->A (func A -> B), labs A -> linA.lbind B.
+labs->A K (lb T B) (linA.lb T B') :- pi d\ labs->A K (B d) (B' d).
+labs->A K (lend X) (linA.lend Y) :- K X Y.
+
+func nexpr->A nexpr -> linA.expr.
+nexpr->A (ret Vs) (linA.ret Vs []).
+nexpr->A (let E B) (linA.let E' B') :- nexpr->A E E', nabs->A nexpr-lend B B'.
+nexpr->A (unpack V B) (linA.unpack V B') :- nabs->A nexpr-lend B B'.
+nexpr->A (app F Vs) (linA.app F' Vs []) :- nfn->A F F'.
+nexpr->A (drop E) (linA.drop E') :- nexpr->A E E'.
+nexpr->A (leaf E) E :- nleaf E.
+
+func nexpr-lend nexpr -> linA.lbind linA.expr.
+nexpr-lend E (linA.lend E') :- nexpr->A E E'.
+
+func lexpr->A lexpr -> linA.expr.
+lexpr->A (lret Ls) (linA.ret [] Ls).
+lexpr->A (llet E B) (linA.let E' (linA.nend B')) :-
+  lexpr->A E E', labs->A lexpr->A B B'.
+lexpr->A (nlet E B) (linA.let E' B') :- nexpr->A E E', nabs->A lexpr-lend B B'.
+lexpr->A (lunpack D B) (linA.lunpack D B') :- labs->A lexpr->A B B'.
+lexpr->A (nunpack V B) (linA.unpack V B') :- nabs->A lexpr-lend B B'.
+lexpr->A (lapp F Vs Ls) (linA.app F' Vs Ls) :- lfn->A F F'.
+lexpr->A (ldrop E) (linA.drop E') :- lexpr->A E E'.
+lexpr->A (lleaf E) E :- lleaf? E.
+
+func lexpr-lend lexpr -> linA.lbind linA.expr.
+lexpr-lend E (linA.lend E') :- lexpr->A E E'.
+
+func nbody-lend nfbody -> linA.lbind linA.fbody.
+nbody-lend (nbody Ts E) (linA.lend (linA.body Ts [] E')) :- nexpr->A E E'.
+
+func lbody->A lfbody -> linA.fbody.
+lbody->A (lbody Ts E) (linA.body [] Ts E') :- lexpr->A E E'.
+
+func to-linA prog -> linA.prog.
+to-linA pnil linA.pnil.
+to-linA (ndef D P) (linA.def D' P') :-
+  nabs->A nbody-lend D D',
+  pi f\ pi g\ nfn->A f g ==> to-linA (P f) (P' g).
+to-linA (ldef D P) (linA.def D' P') :-
+  nabs->A (labs->A lbody->A) D D',
+  pi f\ pi g\ lfn->A f g ==> to-linA (P f) (P' g).
+
+} % namespace linB

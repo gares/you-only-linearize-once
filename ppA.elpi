@@ -1,0 +1,177 @@
+% Pretty printer of Linear A, in the notation of the paper
+%
+
+accumulate linA.
+
+% ---------------------------------------------------------------------------
+% Pretty printer, in the notation of the paper
+% ---------------------------------------------------------------------------
+
+namespace ppA {
+
+shorten linA.{
+  ty, r, tup, val, real, vtup, nl, lin, fn, nbind, nb, nend, lbind, lb, lend,
+  expr, ret, let, unpack, lunpack, app, nvar, lit, tuple, plus, mul, lvar,
+  lzero, ltuple, lplus, lmul, dup, drop, fbody, body, prog, def, pnil }.
+shorten linA.{ sin, cos, exp, neg }.
+
+%
+% Binders get names from their depth: a, b, c, ... for non-linear variables
+% and ȧ, ḃ, ċ, ... (a combining dot) for linear ones. Functions are named
+% f, g, h, ... in program order. Output is a list of lines; the *-string
+% predicates join them with newlines.
+
+func nlname  nl  -> string.
+func linname lin -> string.
+func fnname  fn  -> string.
+
+func var-name int -> string.
+var-name N S :-
+  Alphabet = "acemnopqrsuvwxyz",
+  L is substring Alphabet (N mod 16) 1, K is N div 16, add-suffix L K S.
+
+func fn-name int -> string.
+fn-name N S :- L is substring "fgh" (N mod 3) 1, K is N div 3, add-suffix L K S.
+
+func add-suffix string, int -> string.
+add-suffix L 0 L :- !.
+add-suffix L K S :- S is L ^ int_to_string K.
+
+func dotted string -> string.
+dotted X S :- S is X ^ "̇".
+
+func pp-ty ty -> string.
+pp-ty r "R".
+pp-ty (tup Ts) S :- std.map Ts pp-ty Ss, pp-tensor Ss S.
+
+func pp-tensor list string -> string.
+pp-tensor Ss S :- std.string.concat ", " Ss J, S is "⊗(" ^ J ^ ")".
+
+% (a, b ; ċ), (; ċ), (a ;), (;)
+func pp-split list string, list string -> string.
+pp-split [] [] "(;)" :- !.
+pp-split [] Ls S :- !, std.string.concat ", " Ls B, S is "(; " ^ B ^ ")".
+pp-split Ns [] S :- !, std.string.concat ", " Ns A, S is "(" ^ A ^ " ;)".
+pp-split Ns Ls S :-
+  std.string.concat ", " Ns A, std.string.concat ", " Ls B,
+  S is "(" ^ A ^ " ; " ^ B ^ ")".
+
+func pp-decl string, string -> string.
+pp-decl X T S :- S is X ^ " : " ^ T.
+
+func indent list string -> list string.
+indent Ls Is :- std.map Ls (l\ i\ i is "  " ^ l) Is.
+
+% Name the binders of a spine (starting at depth N), then print the body
+% with K. Returns the names and types of the non-linear and linear binders.
+func pp-nb nbind A, int, (func A, int -> list string)
+  -> list string, list string, list string, list string, list string.
+pp-nb (nend L) N K [] [] LXs LTs Body :- pp-lb L N K LXs LTs Body.
+pp-nb (nb T B) N K [X|Xs] [TS|Ts] LXs LTs Body :-
+  var-name N X, pp-ty T TS, N1 is N + 1,
+  pi x\ nlname x X ==> pp-nb (B x) N1 K Xs Ts LXs LTs Body.
+
+func pp-lb lbind A, int, (func A, int -> list string)
+  -> list string, list string, list string.
+pp-lb (lend E) N K [] [] Body :- K E N Body.
+pp-lb (lb T B) N K [X|Xs] [TS|Ts] Body :-
+  var-name N X0, dotted X0 X, pp-ty T TS, N1 is N + 1,
+  pi x\ linname x X ==> pp-lb (B x) N1 K Xs Ts Body.
+
+% let HEAD = E in, on one line if E fits on one line.
+func pp-let string, list string, list string -> list string.
+pp-let Head [One] Body [L|Body] :- !, L is "let " ^ Head ^ " = " ^ One ^ " in".
+pp-let Head E Body Lines :-
+  L is "let " ^ Head ^ " =", indent E IE,
+  std.append [L|IE] ["in"|Body] Lines.
+
+func pp expr, int -> list string.
+pp (let E B) N Lines :-
+  !, pp-nb B N pp Xs Ts LXs LTs Body,
+  % the bound expression is numbered past the let's own binders, so its
+  % names do not repeat the ones on the left of =
+  std.length Xs K1, std.length LXs K2, N1 is N + K1 + K2,
+  pp E N1 L1,
+  std.map2 Xs Ts pp-decl Ds, std.map2 LXs LTs pp-decl LDs,
+  pp-split Ds LDs Head, pp-let Head L1 Body Lines.
+pp (unpack V B) N Lines :-
+  !, nlname V X, pp-nb B N pp Xs Ts [] [] Body,
+  pp-tensor Xs P, pp-tensor Ts PT,
+  Head is "(" ^ P ^ " : " ^ PT ^ " ;)", pp-let Head [X] Body Lines.
+pp (lunpack V B) N Lines :-
+  !, linname V X, pp-lb B N pp Xs Ts Body,
+  pp-tensor Xs P, pp-tensor Ts PT,
+  Head is "(; " ^ P ^ " : " ^ PT ^ ")", pp-let Head [X] Body Lines.
+pp (drop E) N Lines :- !, pp E N L, pp-drop L Lines.
+pp E _ [S] :- pp-atom E S.
+
+func pp-drop list string -> list string.
+pp-drop [One] [S] :- !, S is "drop(" ^ One ^ ")".
+pp-drop L Lines :- indent L IL, std.append ["drop("|IL] [")"] Lines.
+
+func pp-atom expr -> string.
+pp-atom (ret Vs LVs) S :-
+  std.map Vs nlname Xs, std.map LVs linname LXs, pp-split Xs LXs S.
+pp-atom (app F Vs LVs) S :-
+  fnname F Fn, std.map Vs nlname Xs, std.map LVs linname LXs,
+  pp-split Xs LXs A, S is Fn ^ A.
+pp-atom (nvar V) S :- nlname V S.
+pp-atom (lit F) S :- S0 is real_to_string F, pp-float S0 S.
+
+% OCaml prints 2.0 as "2."; add the trailing 0.
+func pp-float string -> string.
+pp-float S S' :- N is size S, N > 0, M is N - 1, "." is substring S M 1, !,
+  S' is S ^ "0".
+pp-float S S.
+pp-atom (tuple Vs) S :- std.map Vs nlname Xs, pp-tensor Xs S.
+pp-atom (sin V) S :- nlname V X, S is "sin(" ^ X ^ ")".
+pp-atom (cos V) S :- nlname V X, S is "cos(" ^ X ^ ")".
+pp-atom (exp V) S :- nlname V X, S is "exp(" ^ X ^ ")".
+pp-atom (neg V) S :- nlname V X, S is "−" ^ X.
+pp-atom (plus V1 V2) S :- nlname V1 X, nlname V2 Y, S is X ^ " + " ^ Y.
+pp-atom (mul V1 V2) S :- nlname V1 X, nlname V2 Y, S is X ^ " * " ^ Y.
+pp-atom (lvar V) S :- linname V S.
+pp-atom (lzero T) S :- pp-ty T TS, S is "0̇_" ^ TS.
+pp-atom (ltuple Vs) S :- std.map Vs linname Xs, pp-tensor Xs S.
+pp-atom (lplus V1 V2) S :- linname V1 X, linname V2 Y, S is X ^ " + " ^ Y.
+pp-atom (lmul V1 V2) S :- nlname V1 X, linname V2 Y, S is X ^ " * " ^ Y.
+pp-atom (dup V) S :- linname V X, S is "dup(" ^ X ^ ")".
+
+% def f(a : R ; ḃ : R) → (R ; R) =
+%   body
+% The continuation puts the return types first, so the header can use them.
+func pp-body fbody, int -> list string.
+pp-body (body Ss LSs E) N [R|Lines] :-
+  std.map Ss pp-ty STs, std.map LSs pp-ty LSTs, pp-split STs LSTs R,
+  pp E N Lines.
+
+func pp-def nbind fbody, string -> list string.
+pp-def D Fn [Hd|Body] :-
+  pp-nb D 0 pp-body Xs Ts LXs LTs [R|Lines],
+  std.map2 Xs Ts pp-decl Ds, std.map2 LXs LTs pp-decl LDs,
+  pp-split Ds LDs Args,
+  Hd is "def " ^ Fn ^ Args ^ " → " ^ R ^ " =",
+  indent Lines Body.
+
+% Definitions in order, separated by a blank line.
+func pp-prog prog, int -> list string.
+pp-prog pnil _ [].
+pp-prog (def D P) K Lines :-
+  fn-name K Fn, pp-def D Fn L1, K1 is K + 1,
+  (pi f\ fnname f Fn ==> pp-prog (P f) K1 L2),
+  pp-sep L1 L2 Lines.
+
+func pp-sep list string, list string -> list string.
+pp-sep L1 [] L1 :- !.
+pp-sep L1 L2 Lines :- std.append L1 [""|L2] Lines.
+
+func expr->string expr -> string.
+expr->string E S :- pp E 0 L, std.string.concat "\n" L S.
+
+func def->string nbind fbody -> string.
+def->string D S :- pp-def D "f" L, std.string.concat "\n" L S.
+
+func prog->string prog -> string.
+prog->string P S :- pp-prog P 0 L, std.string.concat "\n" L S.
+
+} % namespace ppA
