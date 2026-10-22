@@ -1,0 +1,1087 @@
+% Linear A, from "You Only Linearize Once: Tangents Transpose to Gradients"
+% (Radul, Paszke, Frostig, Johnson, Maclaurin, POPL 2023).
+%
+% Syntax of Figure 3 in HOAS, and the type checker of Figure 4.
+
+% ---------------------------------------------------------------------------
+% Syntax (Figure 3)
+% ---------------------------------------------------------------------------
+
+% Types
+data ty.
+symb r   ty.                 % real scalar
+symb tup list ty -> ty.      % tuple type ⊗τ
+
+% Values (extralinguistic ground constants, used only by the semantics)
+data val.
+symb real float -> val.
+symb vtup list val -> val.
+
+% Variables. Linear A is in A-normal form: arguments are always variables.
+% Non-linear and linear variables live in separate syntactic classes.
+data nl.  % u, v, w, z
+data lin.  % u̇, v̇, ẇ, ż
+data fn.  % function names
+
+% Binders. Every binding site binds some non-linear variables followed by
+% some linear ones, so a non-linear spine (nbind) ends in a linear spine
+% (lbind), which ends in a body of type A. Each binder carries its type.
+data nbind A.
+symb nb   ty -> (nl -> nbind A) -> nbind A.
+symb nend lbind A -> nbind A.
+
+data lbind A.
+symb lb   ty -> (lin -> lbind A) -> lbind A.
+symb lend A -> lbind A.
+
+% Expressions
+data expr.
+% m,n-ary expressions
+symb ret     list nl -> list lin -> expr.            % (v ; v̇)
+symb let     expr -> nbind expr -> expr.              % let (v:τ ; v̇:τ̇) = e in e'
+symb unpack  nl -> nbind expr -> expr.               % let (⊗w:⊗τ ;) = v in e, no linear binders
+symb lunpack lin -> lbind expr -> expr.              % let (; ⊗ẇ:⊗τ̇) = v̇ in e
+symb app     fn -> list nl -> list lin -> expr.      % f(v ; v̇)
+% e^{1,0}: non-linear fragment
+symb nvar  nl -> expr.                               % variable
+symb lit   float -> expr.                            % literal l ∈ R
+symb tuple list nl -> expr.                          % ⊗(v)
+symb sin, cos, exp nl -> expr.                       % unary primitives
+symb plus, mul     nl -> nl -> expr.                 % binary primitives
+% e^{0,1}: linear fragment
+symb lvar   lin -> expr.                             % linear variable
+symb lzero  ty -> expr.                              % 0̇_τ̇
+symb ltuple list lin -> expr.                        % ⊗(v̇)
+symb lplus  lin -> lin -> expr.                      % v̇1 + v̇2
+symb lmul   nl -> lin -> expr.                       % v * v̇
+% e^{0,2} and e^{0,0}
+symb dup  lin -> expr.                               % dup(v̇)
+symb drop expr -> expr.                              % drop(e)
+
+% Definitions: def f(v:τ ; v̇:τ̇) -> (σ ; σ̇) = e
+data fbody.
+symb body list ty -> list ty -> expr -> fbody.       % return types σ, σ̇ and e
+
+% Programs: a function name is bound only after its definition, so HOAS
+% scoping rules out recursion.
+data prog.
+symb def  nbind fbody -> (fn -> prog) -> prog.
+symb pnil prog.
+
+% ---------------------------------------------------------------------------
+% Type checker (Figure 4)
+% ---------------------------------------------------------------------------
+%
+% Γ ; Γ̇ ⊢ e : (τ ; τ̇) is  of E Ts LTs.
+%
+% Each variable in scope carries a usage mark, a fresh unification variable
+% set to `used` when the variable occurs. When a binder goes out of scope we
+% require the mark to be set. Non-linear variables may be marked many times
+% (Γ1 ∪ Γ2: used at least once); linear ones must be unmarked when used
+% (Γ̇1 ⊎ Γ̇2: used exactly once).
+
+data mark.
+symb used mark.
+
+func nlty  nl  -> ty, mark.
+func linty lin -> ty, mark.
+func fnty  fn  -> list ty, list ty, list ty, list ty.
+
+func use-nl nl -> ty.
+use-nl V T :- nlty V T M, M = used.
+
+func use-lin lin -> ty.
+use-lin V T :- linty V T M, var M, M = used.
+
+% Bring the binders into scope, check their types against Ts (non-linear)
+% and LTs (linear), run K on the body, then check every bound variable was
+% used.
+func of-nb nbind A, (func A) -> list ty, list ty.
+of-nb (nend L) K [] LTs :- of-lb L K LTs.
+of-nb (nb T B) K [T|Ts] LTs :-
+  pi x\ nlty x T M => (of-nb (B x) K Ts LTs, not (var M)).
+
+func of-lb lbind A, (func A) -> list ty.
+of-lb (lend X) K [] :- K X.
+of-lb (lb T B) K [T|Ts] :-
+  pi x\ linty x T M => (of-lb (B x) K Ts, not (var M)).
+
+func of expr -> list ty, list ty.
+
+% TypeRet
+of (ret Vs LVs) Ts LTs :-
+  std.map Vs use-nl Ts, std.map LVs use-lin LTs.
+
+% TypeLet
+of (let E1 B) Ss LSs :-
+  of E1 Ts LTs,
+  of-nb B (e2\ of e2 Ss LSs) Ts LTs.
+
+% TypeUnpack
+of (unpack V B) Ss LSs :-
+  use-nl V (tup Ts), of-nb B (e\ of e Ss LSs) Ts [].
+
+% TypeLinUnpack
+of (lunpack V B) Ss LSs :-
+  use-lin V (tup Ts), of-lb B (e\ of e Ss LSs) Ts.
+
+% TypeApp
+of (app F Vs LVs) Ss LSs :-
+  fnty F Ts LTs Ss LSs,
+  std.map Vs use-nl Ts, std.map LVs use-lin LTs.
+
+% TypeVar
+of (nvar V) [T] [] :- use-nl V T.
+
+% TypeLit
+of (lit _) [r] [].
+
+% TypePrim1
+of (sin V) [r] [] :- use-nl V r.
+of (cos V) [r] [] :- use-nl V r.
+of (exp V) [r] [] :- use-nl V r.
+
+% TypePrim2
+of (plus V1 V2) [r] [] :- use-nl V1 r, use-nl V2 r.
+of (mul  V1 V2) [r] [] :- use-nl V1 r, use-nl V2 r.
+
+% TypeTup
+of (tuple Vs) [tup Ts] [] :- std.map Vs use-nl Ts.
+
+% TypeLinTup
+of (ltuple Vs) [] [tup Ts] :- std.map Vs use-lin Ts.
+
+% TypeLinVar
+of (lvar V) [] [T] :- use-lin V T.
+
+% TypeLinZero
+of (lzero T) [] [T].
+
+% TypeLinPlus
+of (lplus V1 V2) [] [T] :- use-lin V1 T, use-lin V2 T.
+
+% TypeLinMul
+of (lmul V1 V2) [] [T] :- use-nl V1 r, use-lin V2 T.
+
+% TypeDup
+of (dup V) [] [T, T] :- use-lin V T.
+
+% TypeDrop
+of (drop E) [] [] :- of E _ _.
+
+% TypeDef
+func of-def nbind fbody -> list ty, list ty, list ty, list ty.
+of-def D Ts LTs Ss LSs :-
+  of-nb D (b\ of-body b Ss LSs) Ts LTs.
+
+func of-body fbody -> list ty, list ty.
+of-body (body Ss LSs E) Ss LSs :- of E Ss LSs.
+
+% Programs: check each definition, then bring its name into scope.
+func of-prog prog.
+of-prog pnil.
+of-prog (def D P) :-
+  of-def D Ts LTs Ss LSs,
+  pi f\ fnty f Ts LTs Ss LSs => of-prog (P f).
+
+% ---------------------------------------------------------------------------
+% Interpreter
+% ---------------------------------------------------------------------------
+%
+% Big-step evaluation: eval E Vs LVs C computes the non-linear results Vs,
+% the linear results LVs, and the cost C of E. Linear values are ordinary
+% values: linearity only matters to the type checker. Variables are bound
+% to values by hypothetical clauses, function names to their definitions.
+%
+% Cost model (Section 4.3):
+% - every non-linear primitive (sin, cos, exp, +, *) costs 1;
+% - linear + and * cost 1 per scalar in the result;
+% - drop costs its subexpression, plus 1 per real scalar (linear or not)
+%   in the dropped results;
+% - a call costs evaluating the body; let costs the bound expression plus
+%   the body;
+% - everything else (variables, literals, tuples, unpacking, 0̇, dup) is free.
+
+func nlval  nl  -> val.
+func linval lin -> val.
+func fndef  fn  -> nbind fbody.
+
+% Bind the variables of a binder spine to values, then run K on the body.
+func bind-nb nbind A, list val, list val, (func A -> list val, list val, int)
+  -> list val, list val, int.
+bind-nb (nend L) [] LXs K Out LOut C :- bind-lb L LXs K Out LOut C.
+bind-nb (nb _ B) [X|Xs] LXs K Out LOut C :-
+  pi x\ nlval x X => bind-nb (B x) Xs LXs K Out LOut C.
+
+func bind-lb lbind A, list val, (func A -> list val, list val, int)
+  -> list val, list val, int.
+bind-lb (lend E) [] K Out LOut C :- K E Out LOut C.
+bind-lb (lb _ B) [X|Xs] K Out LOut C :-
+  pi x\ linval x X => bind-lb (B x) Xs K Out LOut C.
+
+% Arithmetic on values: zero of a type, addition, scaling by a real.
+func zero ty -> val.
+zero r (real 0.0).
+zero (tup Ts) (vtup Xs) :- std.map Ts zero Xs.
+
+func vplus val, val -> val.
+vplus (real A) (real B) (real C) :- C is A + B.
+vplus (vtup Xs) (vtup Ys) (vtup Zs) :- std.map2 Xs Ys vplus Zs.
+
+func vscale float, val -> val.
+vscale A (real B) (real C) :- C is A * B.
+vscale A (vtup Xs) (vtup Ys) :- std.map Xs (vscale A) Ys.
+
+% Number of real scalars in a value, or in a list of values.
+func scalars val -> int.
+scalars (real _) 1.
+scalars (vtup Xs) N :- scalars-list Xs N.
+
+func scalars-list list val -> int.
+scalars-list [] 0.
+scalars-list [X|Xs] N :- scalars X N1, scalars-list Xs N2, N is N1 + N2.
+
+func eval expr -> list val, list val, int.
+eval (ret Vs LVs) Xs LXs 0 :- std.map Vs nlval Xs, std.map LVs linval LXs.
+eval (let E B) Out LOut C :-
+  eval E Xs LXs C1, bind-nb B Xs LXs eval Out LOut C2, C is C1 + C2.
+eval (unpack V B) Out LOut C :-
+  nlval V (vtup Xs), bind-nb B Xs [] eval Out LOut C.
+eval (lunpack V B) Out LOut C :-
+  linval V (vtup Xs), bind-lb B Xs eval Out LOut C.
+eval (app F Vs LVs) Out LOut C :-
+  fndef F D, std.map Vs nlval Xs, std.map LVs linval LXs,
+  bind-nb D Xs LXs eval-body Out LOut C.
+eval (nvar V) [X] [] 0 :- nlval V X.
+eval (lit F) [real F] [] 0.
+eval (tuple Vs) [vtup Xs] [] 0 :- std.map Vs nlval Xs.
+eval (sin V) [real Y] [] 1 :- nlval V (real X), Y is sin X.
+eval (cos V) [real Y] [] 1 :- nlval V (real X), Y is cos X.
+eval (exp V) [real Y] [] 1 :- nlval V (real X), Y is exp X.
+eval (plus V1 V2) [real Z] [] 1 :-
+  nlval V1 (real X), nlval V2 (real Y), Z is X + Y.
+eval (mul V1 V2) [real Z] [] 1 :-
+  nlval V1 (real X), nlval V2 (real Y), Z is X * Y.
+eval (lvar V) [] [X] 0 :- linval V X.
+eval (lzero T) [] [X] 0 :- zero T X.
+eval (ltuple Vs) [] [vtup Xs] 0 :- std.map Vs linval Xs.
+eval (lplus V1 V2) [] [Z] C :-
+  linval V1 X, linval V2 Y, vplus X Y Z, scalars Z C.
+eval (lmul V1 V2) [] [Z] C :-
+  nlval V1 (real A), linval V2 X, vscale A X Z, scalars Z C.
+eval (dup V) [] [X, X] 0 :- linval V X.
+eval (drop E) [] [] C :-
+  eval E Xs LXs C1, std.append Xs LXs Ys, scalars-list Ys N, C is C1 + N.
+
+func eval-body fbody -> list val, list val, int.
+eval-body (body _ _ E) Out LOut C :- eval E Out LOut C.
+
+% Run a program: its last definition is the entry point, called on the
+% non-linear arguments Xs and linear arguments LXs. C is the cost.
+func run prog, list val, list val -> list val, list val, int.
+run (def D (x\ pnil)) Xs LXs Out LOut C :- !,
+  bind-nb D Xs LXs eval-body Out LOut C.
+run (def D P) Xs LXs Out LOut C :-
+  pi f\ fndef f D => run (P f) Xs LXs Out LOut C.
+
+% ---------------------------------------------------------------------------
+% Free non-linear variables
+% ---------------------------------------------------------------------------
+
+% occ E Vs: the non-linear variables occurring free in E, with repetitions.
+func occ expr -> list nl.
+occ (ret Vs _) Vs.
+occ (let E B) L :- occ E L1, occ-nb B L2, std.append L1 L2 L.
+occ (unpack V B) [V|L] :- occ-nb B L.
+occ (lunpack _ B) L :- occ-lb B L.
+occ (app _ Vs _) Vs.
+occ (nvar V) [V].
+occ (lit _) [].
+occ (tuple Vs) Vs.
+occ (sin V) [V].
+occ (cos V) [V].
+occ (exp V) [V].
+occ (plus V1 V2) [V1, V2].
+occ (mul V1 V2) [V1, V2].
+occ (lvar _) [].
+occ (lzero _) [].
+occ (ltuple _) [].
+occ (lplus _ _) [].
+occ (lmul V _) [V].
+occ (dup _) [].
+occ (drop E) L :- occ E L.
+
+func occ-nb nbind expr -> list nl.
+occ-nb (nb _ B) L :- pi x\ occ-under x (B x) L.
+occ-nb (nend LB) L :- occ-lb LB L.
+
+% Called under pi x, so L0 may mention x before x is filtered out.
+func occ-under nl, nbind expr -> list nl.
+occ-under X B L :- occ-nb B L0, std.filter L0 (y\ not (y = X)) L.
+
+func occ-lb lbind expr -> list nl.
+occ-lb (lb _ B) L :- pi x\ occ-lb (B x) L.
+occ-lb (lend E) L :- occ E L.
+
+% Remove duplicates, keeping the first occurrence.
+func uniq list nl -> list nl.
+uniq L R :- uniq-acc L [] R.
+
+func uniq-acc list nl, list nl -> list nl.
+uniq-acc [] Acc R :- std.rev Acc R.
+uniq-acc [X|Xs] Acc R :- std.mem! Acc X, !, uniq-acc Xs Acc R.
+uniq-acc [X|Xs] Acc R :- uniq-acc Xs [X|Acc] R.
+
+func fv expr -> list nl.
+fv E L :- occ E L0, uniq L0 L.
+
+func fv-nb nbind expr -> list nl.
+fv-nb B L :- occ-nb B L0, uniq L0 L.
+
+% ---------------------------------------------------------------------------
+% Forward-mode differentiation J (Section 5, Figure 7)
+% ---------------------------------------------------------------------------
+%
+% dj Sigma E E' is J(Σ | e) ⇝ e'. The input E is in the non-linear fragment.
+% Sigma maps each free variable of E to its tangent and type, and each
+% tangent is used exactly once in E'. When a primal variable is needed more
+% than once, its tangent is duplicated with dup: this is the u ↦ ẇ, ż split
+% of JLet, and the dup variants of JRet, JApp, JTup, JPrimMul and JUnpackB
+% that the paper leaves out. The result is in A-normal form: the compound
+% tangent expressions of Figure 7 are let-bound.
+
+data tan.
+symb sg nl -> lin -> ty -> tan.
+
+func fnj fn -> fn.   % f ↦ f^J
+
+func lookup list tan, nl -> lin, ty.
+lookup [sg V L T|_] V L T :- !.
+lookup [_|S] V L T :- lookup S V L T.
+
+func set-tan list tan, nl, lin -> list tan.
+set-tan [sg V _ T|S] V L [sg V L T|S] :- !.
+set-tan [E|S] V L [E|S'] :- set-tan S V L S'.
+
+% zip-sigma S Vs Ls: map each V to the matching L, with V's type from S.
+func zip-sigma list tan, list nl, list lin -> list tan.
+zip-sigma _ [] [] [].
+zip-sigma S [V|Vs] [L|Ls] [sg V L T|S'] :-
+  lookup S V _ T, zip-sigma S Vs Ls S'.
+
+% with-tans S Vs K E: one fresh tangent per occurrence in Vs, given to K.
+% A variable that occurs again later gets its tangent dup-ed.
+func with-tans list tan, list nl, (func list lin -> expr) -> expr.
+with-tans _ [] K E :- K [] E.
+with-tans S [V|Vs] K (let (dup L) (nend (lb T a\ lb T b\ lend (E a b)))) :-
+  lookup S V L T, std.mem! Vs V, !,
+  pi a\ pi b\ with-tans-dup S V Vs K a b (E a b).
+with-tans S [V|Vs] K E :-
+  lookup S V L _, with-tans S Vs (Ls\ R\ K [L|Ls] R) E.
+
+func with-tans-dup list tan, nl, list nl, (func list lin -> expr), lin, lin
+  -> expr.
+with-tans-dup S V Vs K A B E :-
+  set-tan S V B S', with-tans S' Vs (Ls\ R\ K [A|Ls] R) E.
+
+% Copy a binder spine of non-linear binders (with an empty linear spine),
+% handing the bound variables and their types to K, which builds the new
+% linear spine.
+func copy-nb nbind A, list (pair nl ty), (func A, list (pair nl ty) -> lbind A)
+  -> nbind A.
+copy-nb (nb T B) Acc K (nb T B') :- pi x\ copy-nb (B x) [pr x T|Acc] K (B' x).
+copy-nb (nend (lend X)) Acc K (nend L) :- std.rev Acc Xs, K X Xs L.
+
+% Bind one tangent per variable in Xs, extend Sigma, then build the body.
+func mk-lb list (pair nl ty), list tan, (func list tan -> A) -> lbind A.
+mk-lb [] S K (lend X) :- K S X.
+mk-lb [pr V T|Xs] S K (lb T B) :- pi d\ mk-lb Xs [sg V d T|S] K (B d).
+
+func dj list tan, expr -> expr.
+% JRet
+dj S (ret Vs []) E :- with-tans S Vs (Ls\ R\ R = ret Vs Ls) E.
+% JLet
+dj S (let E1 B) E :-
+  fv E1 F1, fv-nb B F2, std.append F1 F2 Occs,
+  with-tans S Occs (Ls\ R\ dj-let S F1 F2 E1 B Ls R) E.
+% JUnpackA / JUnpackB
+dj S (unpack V B) E :-
+  fv-nb B F2, with-tans S [V|F2] (Ls\ R\ dj-unpack S V F2 B Ls R) E.
+% JApp
+dj S (app F Vs []) E :-
+  fnj F FJ, with-tans S Vs (Ls\ R\ R = app FJ Vs Ls) E.
+% JVar
+dj S (nvar V) E :- with-tans S [V] (Ls\ R\ R = ret [V] Ls) E.
+% JLit
+dj _ (lit F) (let (lit F) (nb r p\ nend (lend
+             (let (lzero r) (nend (lb r z\ lend
+             (ret [p] [z]))))))).
+% JTup
+dj S (tuple Vs) E :-
+  std.map Vs (v\ t\ lookup S v _ t) Ts,
+  with-tans S Vs (Ls\ R\ dj-tuple Vs Ts Ls R) E.
+% JPrimSin, and the analogous rules for cos, exp, + and *
+dj S (sin V) E :- with-tans S [V] (Ls\ R\ dj-sin V Ls R) E.
+dj S (cos V) E :- with-tans S [V] (Ls\ R\ dj-cos V Ls R) E.
+dj S (exp V) E :- with-tans S [V] (Ls\ R\ dj-exp V Ls R) E.
+dj S (plus V1 V2) E :- with-tans S [V1, V2] (Ls\ R\ dj-plus V1 V2 Ls R) E.
+dj S (mul V1 V2) E :- with-tans S [V1, V2] (Ls\ R\ dj-mul V1 V2 Ls R) E.
+% JDrop
+dj S (drop E) (drop E') :- dj S E E'.
+
+func dj-let list tan, list nl, list nl, expr, nbind expr, list lin -> expr.
+dj-let S F1 F2 E1 B Ls (let E1' B') :-
+  std.length F1 N1, std.split-at N1 Ls L1 L2,
+  zip-sigma S F1 L1 S1, zip-sigma S F2 L2 S2,
+  dj S1 E1 E1',
+  copy-nb B [] (E2\ Xs\ L\ mk-lb Xs S2 (S'\ R\ dj S' E2 R) L) B'.
+
+func dj-unpack list tan, nl, list nl, nbind expr, list lin -> expr.
+dj-unpack S V F2 B [DV|L2] (unpack V B') :-
+  zip-sigma S F2 L2 S2,
+  copy-nb B [] (E\ Xs\ L\ dj-lunpack DV Xs S2 E L) B'.
+
+func dj-lunpack lin, list (pair nl ty), list tan, expr -> lbind expr.
+dj-lunpack DV Xs S E (lend (lunpack DV LB)) :- mk-lb Xs S (S'\ R\ dj S' E R) LB.
+
+func dj-tuple list nl, list ty, list lin -> expr.
+dj-tuple Vs Ts Ls
+  (let (tuple Vs) (nb (tup Ts) t\ nend (lend
+  (let (ltuple Ls) (nend (lb (tup Ts) dt\ lend
+  (ret [t] [dt]))))))).
+
+% (sin v ; cos v * v̇)
+func dj-sin nl, list lin -> expr.
+dj-sin V [D]
+  (let (sin V) (nb r s\ nend (lend
+  (let (cos V) (nb r c\ nend (lend
+  (let (lmul c D) (nend (lb r t\ lend
+  (ret [s] [t])))))))))).
+
+% (cos v ; (-1 * sin v) * v̇)
+func dj-cos nl, list lin -> expr.
+dj-cos V [D]
+  (let (cos V) (nb r c\ nend (lend
+  (let (sin V) (nb r s\ nend (lend
+  (let (lit -1.0) (nb r m\ nend (lend
+  (let (mul m s) (nb r n\ nend (lend
+  (let (lmul n D) (nend (lb r t\ lend
+  (ret [c] [t])))))))))))))))).
+
+% (exp v ; exp v * v̇)
+func dj-exp nl, list lin -> expr.
+dj-exp V [D]
+  (let (exp V) (nb r e\ nend (lend
+  (let (lmul e D) (nend (lb r t\ lend
+  (ret [e] [t]))))))).
+
+% (v1 + v2 ; v̇1 + v̇2)
+func dj-plus nl, nl, list lin -> expr.
+dj-plus V1 V2 [D1, D2]
+  (let (plus V1 V2) (nb r p\ nend (lend
+  (let (lplus D1 D2) (nend (lb r t\ lend
+  (ret [p] [t]))))))).
+
+% JPrimMul: (v1 * v2 ; v1 * v̇2 + v2 * v̇1)
+func dj-mul nl, nl, list lin -> expr.
+dj-mul V1 V2 [D1, D2]
+  (let (mul V1 V2) (nb r p\ nend (lend
+  (let (lmul V1 D2) (nend (lb r a\ lend
+  (let (lmul V2 D1) (nend (lb r b\ lend
+  (let (lplus a b) (nend (lb r t\ lend
+  (ret [p] [t]))))))))))))).
+
+% JDef: def f(v:τ ;) -> (σ ;) = e  ⇝  def f^J(v:τ ; v̇:τ) -> (σ ; σ) = e'
+func dj-def nbind fbody -> nbind fbody.
+dj-def D D' :- copy-nb D [] (B\ Xs\ L\ mk-lb Xs [] (S\ R\ dj-body S B R) L) D'.
+
+func dj-body list tan, fbody -> fbody.
+dj-body S (body Ss [] E) (body Ss Ss E') :- dj S E E'.
+
+% Every definition f becomes f^J; calls to f become calls to f^J.
+func dj-prog prog -> prog.
+dj-prog pnil pnil.
+dj-prog (def D P) (def D' P') :-
+  dj-def D D', pi f\ pi fj\ fnj f fj => dj-prog (P f) (P' fj).
+
+% ---------------------------------------------------------------------------
+% Linearity erasure L (Section 4.5)
+% ---------------------------------------------------------------------------
+%
+% lerase-prog P P' turns every linear variable and expression into a
+% non-linear one:
+% - for every type at which linear +, * and 0̇ are used, a fresh function
+%   does the same in the non-linear fragment (unpacking and repacking
+%   tuples), and is defined before the program;
+% - linear +, * and 0̇ become calls to those functions;
+% - references to the results of dup refer to its input, and dup is gone;
+% - all semicolons move to the right: linear binders, arguments and results
+%   come after the non-linear ones.
+
+data op.
+symb opz ty -> op.   % 0̇ at a type
+symb opp ty -> op.   % linear + at a type
+symb opm ty -> op.   % linear * at a type (the scalar is always R)
+
+func lty  lin -> ty.            % types of linear variables, for lops
+func lmap lin -> nl, ty.        % linear variable ↦ its erased variable
+func opfn op -> fn.             % op ↦ the function implementing it
+
+% Which ops a program uses.
+func lops expr -> list op.
+lops (let E B) L :- lops E L1, lops-nb B lops L2, std.append L1 L2 L.
+lops (unpack _ B) L :- lops-nb B lops L.
+lops (lunpack _ B) L :- lops-lb B lops L.
+lops (drop E) L :- lops E L.
+lops (lzero T) [opz T].
+lops (lplus D _) [opp T] :- lty D T.
+lops (lmul _ D) [opm T] :- lty D T.
+lops (ret _ _) [].
+lops (app _ _ _) [].
+lops (nvar _) [].
+lops (lit _) [].
+lops (tuple _) [].
+lops (sin _) [].
+lops (cos _) [].
+lops (exp _) [].
+lops (plus _ _) [].
+lops (mul _ _) [].
+lops (lvar _) [].
+lops (ltuple _) [].
+lops (dup _) [].
+
+func lops-nb nbind A, (func A -> list op) -> list op.
+lops-nb (nb _ B) K L :- pi x\ lops-nb (B x) K L.
+lops-nb (nend LB) K L :- lops-lb LB K L.
+
+func lops-lb lbind A, (func A -> list op) -> list op.
+lops-lb (lb T B) K L :- pi d\ lty d T => lops-lb (B d) K L.
+lops-lb (lend X) K L :- K X L.
+
+func lops-body fbody -> list op.
+lops-body (body _ _ E) L :- lops E L.
+
+func lops-prog prog -> list op.
+lops-prog pnil [].
+lops-prog (def D P) L :-
+  lops-nb D lops-body L1, (pi f\ lops-prog (P f) L2), std.append L1 L2 L.
+
+% Close under components (an op on a tuple uses the op on each component)
+% and order the result so that components come first.
+func close-ops list op, list op -> list op.
+close-ops [] Acc Acc.
+close-ops [Op|Ops] Acc Out :- add-op Op Acc Acc1, close-ops Ops Acc1 Out.
+
+func add-op op, list op -> list op.
+add-op Op Acc Acc :- std.mem! Acc Op, !.
+add-op Op Acc Out :-
+  op-deps Op Ds, close-ops Ds Acc Acc1, std.append Acc1 [Op] Out.
+
+func op-deps op -> list op.
+op-deps (opz (tup Ts)) Ds :- !, std.map Ts (t\ o\ o = opz t) Ds.
+op-deps (opp (tup Ts)) Ds :- !, std.map Ts (t\ o\ o = opp t) Ds.
+op-deps (opm (tup Ts)) Ds :- !, std.map Ts (t\ o\ o = opm t) Ds.
+op-deps _ [].
+
+% The definition implementing an op.
+func op-def op -> nbind fbody.
+op-def (opz r) (nend (lend (body [r] [] (lit 0.0)))) :- !.
+op-def (opz (tup Ts)) (nend (lend (body [tup Ts] [] E))) :- !,
+  mk-zero Ts [] E.
+op-def (opp r) (nb r x\ nb r y\ nend (lend (body [r] [] (plus x y)))) :- !.
+op-def (opp (tup Ts))
+  (nb (tup Ts) x\ nb (tup Ts) y\ nend (lend (body [tup Ts] [] (E x y)))) :- !,
+  pi x\ pi y\ mk-unpack2 x y Ts mk-plus (E x y).
+op-def (opm r) (nb r a\ nb r x\ nend (lend (body [r] [] (mul a x)))) :- !.
+op-def (opm (tup Ts))
+  (nb r a\ nb (tup Ts) x\ nend (lend (body [tup Ts] [] (E a x)))) :-
+  pi a\ pi x\ mk-unpack x Ts (Xs\ R\ mk-scale a Ts Xs [] R) (E a x).
+
+func mk-zero list ty, list nl -> expr.
+mk-zero [] Acc (tuple Vs) :- std.rev Acc Vs.
+mk-zero [T|Ts] Acc (let (app F [] []) (nb T z\ nend (lend (E z)))) :-
+  opfn (opz T) F, pi z\ mk-zero Ts [z|Acc] (E z).
+
+% let (⊗xs ;) = X in K xs
+func mk-unpack nl, list ty, (func list nl -> expr) -> expr.
+mk-unpack X Ts K (unpack X B) :- bind-list Ts [] K B.
+
+func bind-list list ty, list nl, (func list nl -> expr) -> nbind expr.
+bind-list [] Acc K (nend (lend E)) :- std.rev Acc Xs, K Xs E.
+bind-list [T|Ts] Acc K (nb T B) :- pi x\ bind-list Ts [x|Acc] K (B x).
+
+% Unpack two tuples X and Y of the same type, then K xs ys.
+func mk-unpack2 nl, nl, list ty, (func list ty, list nl, list nl -> expr)
+  -> expr.
+mk-unpack2 X Y Ts K E :-
+  mk-unpack X Ts (Xs\ R\ mk-unpack Y Ts (Ys\ R'\ K Ts Xs Ys R') R) E.
+
+func mk-plus list ty, list nl, list nl -> expr.
+mk-plus Ts Xs Ys E :- mk-plus-acc Ts Xs Ys [] E.
+
+func mk-plus-acc list ty, list nl, list nl, list nl -> expr.
+mk-plus-acc [] [] [] Acc (tuple Vs) :- std.rev Acc Vs.
+mk-plus-acc [T|Ts] [X|Xs] [Y|Ys] Acc
+    (let (app F [X, Y] []) (nb T s\ nend (lend (E s)))) :-
+  opfn (opp T) F, pi s\ mk-plus-acc Ts Xs Ys [s|Acc] (E s).
+
+func mk-scale nl, list ty, list nl, list nl -> expr.
+mk-scale _ [] [] Acc (tuple Vs) :- std.rev Acc Vs.
+mk-scale A [T|Ts] [X|Xs] Acc
+    (let (app F [A, X] []) (nb T s\ nend (lend (E s)))) :-
+  opfn (opm T) F, pi s\ mk-scale A Ts Xs [s|Acc] (E s).
+
+func lname lin -> nl.
+lname D X :- lmap D X _.
+
+% Erase a binder spine: linear binders become non-linear binders placed
+% after the non-linear ones.
+func le-nb nbind A, (func A -> A) -> nbind A.
+le-nb (nb T B) K (nb T B') :- pi x\ le-nb (B x) K (B' x).
+le-nb (nend L) K L' :- le-lb L K L'.
+
+func le-lb lbind A, (func A -> A) -> nbind A.
+le-lb (lend X) K (nend (lend X')) :- K X X'.
+le-lb (lb T B) K (nb T B') :-
+  pi d\ pi x\ lmap d x T => le-lb (B d) K (B' x).
+
+func lerase expr -> expr.
+lerase (ret Vs LVs) (ret Ws []) :-
+  std.map LVs lname Xs, std.append Vs Xs Ws.
+% dup is removed: both results are renamed to its input.
+lerase (let (dup D) (nend (lb T a\ lb T b\ lend (E a b)))) E' :- !,
+  lmap D X _,
+  pi a\ pi b\ lmap a X T => lmap b X T => lerase (E a b) E'.
+lerase (let E B) (let E' B') :- lerase E E', le-nb B lerase B'.
+lerase (unpack V B) (unpack V B') :- le-nb B lerase B'.
+lerase (lunpack D B) (unpack X B') :- lname D X, le-lb B lerase B'.
+lerase (app F Vs LVs) (app F Ws []) :-
+  std.map LVs lname Xs, std.append Vs Xs Ws.
+lerase (nvar V) (nvar V).
+lerase (lit F) (lit F).
+lerase (tuple Vs) (tuple Vs).
+lerase (sin V) (sin V).
+lerase (cos V) (cos V).
+lerase (exp V) (exp V).
+lerase (plus V1 V2) (plus V1 V2).
+lerase (mul V1 V2) (mul V1 V2).
+lerase (lvar D) (nvar X) :- lname D X.
+lerase (lzero T) (app F [] []) :- opfn (opz T) F.
+lerase (ltuple Ds) (tuple Xs) :- std.map Ds lname Xs.
+lerase (lplus D1 D2) (app F [X1, X2] []) :-
+  lmap D1 X1 T, lname D2 X2, opfn (opp T) F.
+lerase (lmul V D) (app F [V, X] []) :- lmap D X T, opfn (opm T) F.
+lerase (dup D) (ret [X, X] []) :- lname D X.
+lerase (drop E) (drop E') :- lerase E E'.
+
+func lerase-body fbody -> fbody.
+lerase-body (body Ss LSs E) (body Ts [] E') :-
+  std.append Ss LSs Ts, lerase E E'.
+
+func lerase-def nbind fbody -> nbind fbody.
+lerase-def D D' :- le-nb D lerase-body D'.
+
+func lerase-defs prog -> prog.
+lerase-defs pnil pnil.
+lerase-defs (def D P) (def D' P') :-
+  lerase-def D D', pi f\ lerase-defs (P f) (P' f).
+
+% Define the op functions first, then the erased program.
+func lerase-prog prog -> prog.
+lerase-prog P P' :-
+  lops-prog P Ops0, close-ops Ops0 [] Ops, with-ops Ops P P'.
+
+func with-ops list op, prog -> prog.
+with-ops [] P P' :- lerase-defs P P'.
+with-ops [Op|Ops] P (def D P') :-
+  op-def Op D, pi h\ (opfn Op h :- !) => with-ops Ops P (P' h).
+
+% ---------------------------------------------------------------------------
+% Pretty printer, in the notation of the paper
+% ---------------------------------------------------------------------------
+%
+% Binders get names from their depth: a, b, c, ... for non-linear variables
+% and ȧ, ḃ, ċ, ... (a combining dot) for linear ones. Functions are named
+% f, g, h, ... in program order. Output is a list of lines; the *-string
+% predicates join them with newlines.
+
+func nlname  nl  -> string.
+func linname lin -> string.
+func fnname  fn  -> string.
+
+func var-name int -> string.
+var-name N S :-
+  Alphabet = "acemnopqrsuvwxyz",
+  L is substring Alphabet (N mod 16) 1, K is N div 16, add-suffix L K S.
+
+func fn-name int -> string.
+fn-name N S :- L is substring "fgh" (N mod 3) 1, K is N div 3, add-suffix L K S.
+
+func add-suffix string, int -> string.
+add-suffix L 0 L :- !.
+add-suffix L K S :- S is L ^ int_to_string K.
+
+func dotted string -> string.
+dotted X S :- S is X ^ "̇".
+
+func pp-ty ty -> string.
+pp-ty r "R".
+pp-ty (tup Ts) S :- std.map Ts pp-ty Ss, pp-tensor Ss S.
+
+func pp-tensor list string -> string.
+pp-tensor Ss S :- std.string.concat ", " Ss J, S is "⊗(" ^ J ^ ")".
+
+% (a, b ; ċ), (; ċ), (a ;), (;)
+func pp-split list string, list string -> string.
+pp-split [] [] "(;)" :- !.
+pp-split [] Ls S :- !, std.string.concat ", " Ls B, S is "(; " ^ B ^ ")".
+pp-split Ns [] S :- !, std.string.concat ", " Ns A, S is "(" ^ A ^ " ;)".
+pp-split Ns Ls S :-
+  std.string.concat ", " Ns A, std.string.concat ", " Ls B,
+  S is "(" ^ A ^ " ; " ^ B ^ ")".
+
+func pp-decl string, string -> string.
+pp-decl X T S :- S is X ^ " : " ^ T.
+
+func indent list string -> list string.
+indent Ls Is :- std.map Ls (l\ i\ i is "  " ^ l) Is.
+
+% Name the binders of a spine (starting at depth N), then print the body
+% with K. Returns the names and types of the non-linear and linear binders.
+func pp-nb nbind A, int, (func A, int -> list string)
+  -> list string, list string, list string, list string, list string.
+pp-nb (nend L) N K [] [] LXs LTs Body :- pp-lb L N K LXs LTs Body.
+pp-nb (nb T B) N K [X|Xs] [TS|Ts] LXs LTs Body :-
+  var-name N X, pp-ty T TS, N1 is N + 1,
+  pi x\ nlname x X => pp-nb (B x) N1 K Xs Ts LXs LTs Body.
+
+func pp-lb lbind A, int, (func A, int -> list string)
+  -> list string, list string, list string.
+pp-lb (lend E) N K [] [] Body :- K E N Body.
+pp-lb (lb T B) N K [X|Xs] [TS|Ts] Body :-
+  var-name N X0, dotted X0 X, pp-ty T TS, N1 is N + 1,
+  pi x\ linname x X => pp-lb (B x) N1 K Xs Ts Body.
+
+% let HEAD = E in, on one line if E fits on one line.
+func pp-let string, list string, list string -> list string.
+pp-let Head [One] Body [L|Body] :- !, L is "let " ^ Head ^ " = " ^ One ^ " in".
+pp-let Head E Body Lines :-
+  L is "let " ^ Head ^ " =", indent E IE,
+  std.append [L|IE] ["in"|Body] Lines.
+
+func pp expr, int -> list string.
+pp (let E B) N Lines :-
+  !, pp-nb B N pp Xs Ts LXs LTs Body,
+  % the bound expression is numbered past the let's own binders, so its
+  % names do not repeat the ones on the left of =
+  std.length Xs K1, std.length LXs K2, N1 is N + K1 + K2,
+  pp E N1 L1,
+  std.map2 Xs Ts pp-decl Ds, std.map2 LXs LTs pp-decl LDs,
+  pp-split Ds LDs Head, pp-let Head L1 Body Lines.
+pp (unpack V B) N Lines :-
+  !, nlname V X, pp-nb B N pp Xs Ts [] [] Body,
+  pp-tensor Xs P, pp-tensor Ts PT,
+  Head is "(" ^ P ^ " : " ^ PT ^ " ;)", pp-let Head [X] Body Lines.
+pp (lunpack V B) N Lines :-
+  !, linname V X, pp-lb B N pp Xs Ts Body,
+  pp-tensor Xs P, pp-tensor Ts PT,
+  Head is "(; " ^ P ^ " : " ^ PT ^ ")", pp-let Head [X] Body Lines.
+pp (drop E) N Lines :- !, pp E N L, pp-drop L Lines.
+pp E _ [S] :- pp-atom E S.
+
+func pp-drop list string -> list string.
+pp-drop [One] [S] :- !, S is "drop(" ^ One ^ ")".
+pp-drop L Lines :- indent L IL, std.append ["drop("|IL] [")"] Lines.
+
+func pp-atom expr -> string.
+pp-atom (ret Vs LVs) S :-
+  std.map Vs nlname Xs, std.map LVs linname LXs, pp-split Xs LXs S.
+pp-atom (app F Vs LVs) S :-
+  fnname F Fn, std.map Vs nlname Xs, std.map LVs linname LXs,
+  pp-split Xs LXs A, S is Fn ^ A.
+pp-atom (nvar V) S :- nlname V S.
+pp-atom (lit F) S :- S0 is real_to_string F, pp-float S0 S.
+
+% OCaml prints 2.0 as "2."; add the trailing 0.
+func pp-float string -> string.
+pp-float S S' :- N is size S, N > 0, M is N - 1, "." is substring S M 1, !,
+  S' is S ^ "0".
+pp-float S S.
+pp-atom (tuple Vs) S :- std.map Vs nlname Xs, pp-tensor Xs S.
+pp-atom (sin V) S :- nlname V X, S is "sin(" ^ X ^ ")".
+pp-atom (cos V) S :- nlname V X, S is "cos(" ^ X ^ ")".
+pp-atom (exp V) S :- nlname V X, S is "exp(" ^ X ^ ")".
+pp-atom (plus V1 V2) S :- nlname V1 X, nlname V2 Y, S is X ^ " + " ^ Y.
+pp-atom (mul V1 V2) S :- nlname V1 X, nlname V2 Y, S is X ^ " * " ^ Y.
+pp-atom (lvar V) S :- linname V S.
+pp-atom (lzero T) S :- pp-ty T TS, S is "0̇_" ^ TS.
+pp-atom (ltuple Vs) S :- std.map Vs linname Xs, pp-tensor Xs S.
+pp-atom (lplus V1 V2) S :- linname V1 X, linname V2 Y, S is X ^ " + " ^ Y.
+pp-atom (lmul V1 V2) S :- nlname V1 X, linname V2 Y, S is X ^ " * " ^ Y.
+pp-atom (dup V) S :- linname V X, S is "dup(" ^ X ^ ")".
+
+% def f(a : R ; ḃ : R) → (R ; R) =
+%   body
+% The continuation puts the return types first, so the header can use them.
+func pp-body fbody, int -> list string.
+pp-body (body Ss LSs E) N [R|Lines] :-
+  std.map Ss pp-ty STs, std.map LSs pp-ty LSTs, pp-split STs LSTs R,
+  pp E N Lines.
+
+func pp-def nbind fbody, string -> list string.
+pp-def D Fn [Hd|Body] :-
+  pp-nb D 0 pp-body Xs Ts LXs LTs [R|Lines],
+  std.map2 Xs Ts pp-decl Ds, std.map2 LXs LTs pp-decl LDs,
+  pp-split Ds LDs Args,
+  Hd is "def " ^ Fn ^ Args ^ " → " ^ R ^ " =",
+  indent Lines Body.
+
+% Definitions in order, separated by a blank line.
+func pp-prog prog, int -> list string.
+pp-prog pnil _ [].
+pp-prog (def D P) K Lines :-
+  fn-name K Fn, pp-def D Fn L1, K1 is K + 1,
+  (pi f\ fnname f Fn => pp-prog (P f) K1 L2),
+  pp-sep L1 L2 Lines.
+
+func pp-sep list string, list string -> list string.
+pp-sep L1 [] L1 :- !.
+pp-sep L1 L2 Lines :- std.append L1 [""|L2] Lines.
+
+func expr->string expr -> string.
+expr->string E S :- pp E 0 L, std.string.concat "\n" L S.
+
+func def->string nbind fbody -> string.
+def->string D S :- pp-def D "f" L, std.string.concat "\n" L S.
+
+func prog->string prog -> string.
+prog->string P S :- pp-prog P 0 L, std.string.concat "\n" L S.
+
+% ---------------------------------------------------------------------------
+% Examples
+% ---------------------------------------------------------------------------
+
+% g(x ; ẏ) = (x² ; x²ẏ), from Section 4.1:
+%   def g(x:R ; ẏ:R) -> (R ; R) =
+%     let (a:R ;) = x * x in
+%     let (; ḃ:R) = a * ẏ in
+%     (a ; ḃ)
+func example-g -> nbind fbody.
+example-g (nb r x\ nend (lb r y\ lend (body [r] [r]
+  (let (mul x x) (nb r a\ nend (lend
+  (let (lmul a y) (nend (lb r b\ lend
+  (ret [a] [b])))))))))).
+
+% Ill-typed: ẏ is used twice.
+func bad-twice -> nbind fbody.
+bad-twice (nb r x\ nend (lb r y\ lend (body [r] [r, r]
+  (ret [x] [y, y])))).
+
+% Ill-typed: x is never used (it should be dropped).
+func bad-unused -> nbind fbody.
+bad-unused (nb r x\ nend (lb r y\ lend (body [] [r]
+  (ret [] [y])))).
+
+% Well-typed: x is dropped explicitly, ẏ is duplicated explicitly.
+func good-drop-dup -> nbind fbody.
+good-drop-dup (nb r x\ nend (lb r y\ lend (body [] [r, r]
+  (let (drop (nvar x)) (nend (lend
+  (let (dup y) (nend (lb r y1\ lb r y2\ lend
+  (ret [] [y1, y2])))))))))).
+
+% Unpacking lets: split a non-linear pair and a linear pair.
+%   def swap(p:⊗(R,R) ; q̇:⊗(R,R)) -> (R,R ; R,R) =
+%     let (⊗(a,b) ;) = p in let (; ⊗(ċ,ḋ)) = q̇ in (b,a ; ḋ,ċ)
+func example-unpack -> nbind fbody.
+example-unpack (nb (tup [r,r]) p\ nend (lb (tup [r,r]) q\ lend
+  (body [r,r] [r,r]
+  (unpack p (nb r a\ nb r b\ nend (lend
+  (lunpack q (lb r c\ lb r d\ lend
+  (ret [b,a] [d,c]))))))))).
+
+% A program calling g after its definition.
+func example-prog -> prog.
+example-prog P :-
+  example-g G,
+  P = def G g\
+      def (nb r x\ nend (lb r y\ lend (body [r] [r] (app g [x] [y])))) _\
+      pnil.
+
+% The forward derivative of sin, as J would produce it:
+%   def dsin(x:R ; ẋ:R) -> (R ; R) =
+%     let (s:R ;) = sin(x) in let (c:R ;) = cos(x) in
+%     let (; ḋ:R) = c * ẋ in (s ; ḋ)
+func example-dsin -> nbind fbody.
+example-dsin (nb r x\ nend (lb r dx\ lend (body [r] [r]
+  (let (sin x) (nb r s\ nend (lend
+  (let (cos x) (nb r c\ nend (lend
+  (let (lmul c dx) (nend (lb r d\ lend
+  (ret [s] [d]))))))))))))).
+
+% Run a single definition as a one-function program.
+func run-def nbind fbody, list val, list val -> list val, list val, int.
+run-def D Xs LXs Out LOut C :- run (def D x\ pnil) Xs LXs Out LOut C.
+
+% --- Inputs to dj: purely non-linear definitions -----------------------------
+
+% sq(x) = x * x  (x is used twice, so its tangent is dup-ed)
+func primal-sq -> nbind fbody.
+primal-sq (nb r x\ nend (lend (body [r] [] (mul x x)))).
+
+% h(x) = let s = sin(x) in let p = x * s in exp(p)
+% (x is free in both the bound expression and the body of the first let)
+func primal-h -> nbind fbody.
+primal-h (nb r x\ nend (lend (body [r] []
+  (let (sin x) (nb r s\ nend (lend
+  (let (mul x s) (nb r p\ nend (lend
+  (exp p)))))))))).
+
+% m(p : ⊗(R,R)) = let (⊗(a,b) ;) = p in let c = a * b in
+%                 let w = 2.0 in let d = c * w in (d, p ;)
+% (p is used after unpacking it: rule JUnpackB; 2.0 uses JLit)
+func primal-m -> nbind fbody.
+primal-m (nb (tup [r,r]) p\ nend (lend (body [r, tup [r,r]] []
+  (unpack p (nb r a\ nb r b\ nend (lend
+  (let (mul a b) (nb r c\ nend (lend
+  (let (lit 2.0) (nb r w\ nend (lend
+  (let (mul c w) (nb r d\ nend (lend
+  (ret [d, p] [])))))))))))))))).
+
+% A program: sq, then k(x) = let y = sq(x) in y + x.
+func primal-prog -> prog.
+primal-prog P :-
+  primal-sq Sq,
+  P = def Sq sq\
+      def (nb r x\ nend (lend (body [r] []
+            (let (app sq [x] []) (nb r y\ nend (lend (plus y x))))))) _\
+      pnil.
+
+% --- Inputs to lerase: linear + , * and 0̇ at a tuple type -------------------
+
+%   def lt(; ẋ:⊗(R,R)) -> (; ⊗(R,R)) =
+%     let (; ż) = 0̇_⊗(R,R) in let (; ṡ) = ẋ + ż in
+%     let (w ;) = 2.0 in let (; ṫ) = w * ṡ in (; ṫ)
+func example-lin-tup -> nbind fbody.
+example-lin-tup (nend (lb (tup [r,r]) x\ lend (body [] [tup [r,r]]
+  (let (lzero (tup [r,r])) (nend (lb (tup [r,r]) z\ lend
+  (let (lplus x z) (nend (lb (tup [r,r]) s\ lend
+  (let (lit 2.0) (nb r w\ nend (lend
+  (let (lmul w s) (nend (lb (tup [r,r]) u\ lend
+  (ret [] [u])))))))))))))))).
+
+% --- Test helpers ------------------------------------------------------------
+
+% Values equal up to 1e-9.
+func approx val, val.
+approx (real A) (real B) :- D is A - B, D < 0.000000001, D > -0.000000001.
+approx (vtup Xs) (vtup Ys) :- std.forall2 Xs Ys approx.
+
+func approx-list list val, list val.
+approx-list Xs Ys :- std.forall2 Xs Ys approx.
+
+func check string, (func).
+check Msg G :- G, !, print "ok:" Msg.
+check Msg _ :- print "FAILED:" Msg, fail.
+
+main :-
+  example-g G, of-def G Ts LTs Ss LSs,
+  print "g :" Ts LTs "->" Ss LSs,
+  good-drop-dup D, of-def D _ _ _ _, print "drop/dup example: ok",
+  bad-twice B1, not (of-def B1 _ _ _ _), print "linear var used twice: rejected",
+  bad-unused B2, not (of-def B2 _ _ _ _), print "unused non-linear var: rejected",
+  example-unpack U, of-def U _ _ _ _, print "unpack example: ok",
+  example-prog P, of-prog P, print "program: ok",
+  run P [real 3.0] [real 1.0] O1 L1 C1, print "run g(3 ; 1) =" O1 L1 "cost" C1,
+  example-dsin S, of-def S _ _ _ _,
+  run-def S [real 0.0] [real 2.0] O2 L2 C2, print "run dsin(0 ; 2) =" O2 L2 "cost" C2,
+  run-def D [real 5.0] [real 7.0] O3 L3 C3, print "run drop/dup(5 ; 7) =" O3 L3 "cost" C3,
+  run-def U [vtup [real 1.0, real 2.0]] [vtup [real 3.0, real 4.0]] O4 L4 C4,
+  print "run swap((1,2) ; (3,4)) =" O4 L4 "cost" C4,
+  print "",
+  prog->string P SP, print SP, print "",
+  def->string S SS, print SS, print "",
+  def->string D SD, print SD, print "",
+  def->string U SU, print SU,
+  print "",
+  test-dj, print "", test-lerase.
+
+func test-dj.
+test-dj :-
+  print "--- forward derivative J (dj) ---",
+  % sq: (x*x ; 2x ẋ), and x*x needs a dup of ẋ
+  primal-sq Sq, dj-def Sq SqJ,
+  def->string SqJ SSq, print SSq,
+  check "sq^J type-checks" (of-def SqJ [r] [r] [r] [r]),
+  run-def Sq [real 3.0] [] _ _ C0,
+  run-def SqJ [real 3.0] [real 1.0] O1 L1 C1,
+  print "sq^J(3 ; 1) =" O1 L1 "cost" C1 "(primal cost" C0 ")",
+  check "sq^J(3 ; 1) = (9 ; 6)"
+    (approx-list O1 [real 9.0], approx-list L1 [real 6.0]),
+  % h: x shared between the bound expression and the body of a let
+  primal-h H, dj-def H HJ,
+  def->string HJ SH, print SH,
+  check "h^J type-checks" (of-def HJ [r] [r] [r] [r]),
+  X = 0.5, run-def HJ [real X] [real 1.0] O2 L2 C2,
+  run-def H [real X] [] _ _ C2p,
+  print "h^J(0.5 ; 1) =" O2 L2 "cost" C2 "(primal cost" C2p ")",
+  P is X * sin X, Y is exp P, DY is Y * (sin X + X * cos X),
+  check "h^J(0.5 ; 1) = (h(0.5) ; h'(0.5))"
+    (approx-list O2 [real Y], approx-list L2 [real DY]),
+  % m: tuples, unpacking a variable that is used again, literals
+  primal-m M, dj-def M MJ,
+  def->string MJ SM, print SM,
+  check "m^J type-checks"
+    (of-def MJ [tup [r,r]] [tup [r,r]] [r, tup [r,r]] [r, tup [r,r]]),
+  run-def MJ [vtup [real 2.0, real 3.0]] [vtup [real 1.0, real 0.0]] O3 L3 C3,
+  print "m^J((2,3) ; (1,0)) =" O3 L3 "cost" C3,
+  check "m^J((2,3) ; (1,0)) = (12, (2,3) ; 6, (1,0))"
+    (approx-list O3 [real 12.0, vtup [real 2.0, real 3.0]],
+     approx-list L3 [real 6.0, vtup [real 1.0, real 0.0]]),
+  % a program: calls to sq become calls to sq^J
+  primal-prog PP, dj-prog PP PJ,
+  prog->string PJ SP, print SP,
+  check "program^J type-checks" (of-prog PJ),
+  run PJ [real 3.0] [real 1.0] O4 L4 C4,
+  print "k^J(3 ; 1) =" O4 L4 "cost" C4,
+  check "k^J(3 ; 1) = (12 ; 7)"
+    (approx-list O4 [real 12.0], approx-list L4 [real 7.0]),
+  check "dj rejects linear input" (not (example-g G, dj-def G _)).
+
+func test-lerase.
+test-lerase :-
+  print "--- linearity erasure L (lerase) ---",
+  % L(J(k))(x, 1 ;) computes k and its derivative with no linear code
+  primal-prog PP, dj-prog PP PJ, lerase-prog PJ PE,
+  prog->string PE SE, print SE,
+  check "L(k^J) type-checks" (of-prog PE),
+  run PJ [real 3.0] [real 1.0] _ _ CJ,
+  run PE [real 3.0, real 1.0] [] O1 L1 CE,
+  print "L(k^J)(3, 1 ;) =" O1 L1 "cost" CE,
+  check "L(k^J)(3, 1 ;) = (12, 7 ;)" (approx-list O1 [real 12.0, real 7.0], L1 = []),
+  check "L preserves cost on k^J" (CJ = CE),
+  % g: linear * becomes a call to a fresh mul function
+  example-prog G, lerase-prog G GE,
+  prog->string GE SG, print SG,
+  check "L(g) type-checks" (of-prog GE),
+  run G [real 3.0] [real 1.0] _ _ CG, run GE [real 3.0, real 1.0] [] O2 _ CGE,
+  check "L(g)(3, 1 ;) = (9, 9 ;) with the same cost"
+    (approx-list O2 [real 9.0, real 9.0], CG = CGE),
+  % dup disappears, lunpack becomes unpack
+  good-drop-dup D, lerase-prog (def D x\ pnil) DE,
+  prog->string DE SD, print SD,
+  check "L(drop/dup) type-checks" (of-prog DE),
+  example-unpack U, lerase-prog (def U x\ pnil) UE,
+  prog->string UE SU, print SU,
+  check "L(swap) type-checks" (of-prog UE),
+  run UE [vtup [real 1.0, real 2.0], vtup [real 3.0, real 4.0]] [] O3 _ _,
+  check "L(swap) swaps"
+    (approx-list O3 [real 2.0, real 1.0, real 4.0, real 3.0]),
+  % + , * and 0̇ on tuples: the helper functions recurse on components
+  example-lin-tup T, lerase-prog (def T x\ pnil) TE,
+  prog->string TE ST, print ST,
+  check "L(lt) type-checks" (of-prog TE),
+  run (def T x\ pnil) [] [vtup [real 1.0, real 2.0]] _ L4 C4,
+  run TE [vtup [real 1.0, real 2.0]] [] O4 _ C4E,
+  print "lt(; (1,2)) =" L4 "cost" C4 "  L(lt)((1,2) ;) =" O4 "cost" C4E,
+  check "L(lt) computes the same result with the same cost"
+    (approx-list O4 L4, C4 = C4E).
