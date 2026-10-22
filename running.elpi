@@ -73,6 +73,13 @@ show :-
   evalA.run AT [Tape] [real 1.0] _ L5 C5,
   print "f^J.linᵀ(tape ; 1) =" L5 "cost" C5 " (the gradient f'(0.5) = −cos(0.5))",
 
+  step "C(T(U(C(J(f))))): cleanup again, on Linear B",
+  flatten.flatten-progB PT PT1, copyprop.copyprop-progB PT1 PTC,
+  ppB.tprog->string PTC STC, print STC,
+  linB.to-linA PTC ATC, show-types ATC,
+  evalA.run ATC [Tape] [real 1.0] _ L6 C6,
+  print "f^J.linᵀ(tape ; 1) =" L6 "cost" C6 " (same as before the cleanup)",
+
   step "L(C(J(f))): linearity erasure, F and F' with no linear code (Section 5)",
   erase.lerase-prog PJ PE,
   ppA.prog->string PE SE, print SE, show-types PE,

@@ -1,6 +1,7 @@
-% Step copyprop: copy propagation (after J and flatten)
+% Cleanup C, part 2, copyprop: copy propagation (after flatten)
 %
-% Linear A to Linear A. A let whose bound expression is just variables
+% Linear A to Linear A (copyprop-prog), and Linear B to Linear B
+% (copyprop-progB). A let whose bound expression is just variables
 % renames them:
 %   let (x̄ ; ẏ) = (v̄ ; ẇ) in c   ⇝   c[x̄ := v̄, ẏ := ẇ]
 % and likewise let (x ;) = v in c and let (; ẏ) = ẇ in c. In HOAS the
@@ -10,6 +11,7 @@
 % same cost.
 
 accumulate linA.
+accumulate linB.
 
 namespace copyprop {
 
@@ -42,5 +44,47 @@ inst-lb (lend E) [] E.
 
 func copyprop-prog prog -> prog.
 copyprop-prog P P' :- map-prog copyprop P P'.
+
+% --- Linear B ---------------------------------------------------------------------
+
+func ncopyprop linB.nexpr -> linB.nexpr.
+ncopyprop (linB.let E B) R :- !, ncopyprop E E', nlet-copy E' B R.
+ncopyprop (linB.unpack V B) (linB.unpack V B') :- !, linB.map-nabs ncopyprop B B'.
+ncopyprop (linB.drop E) (linB.drop E') :- !, ncopyprop E E'.
+ncopyprop E E.
+
+func nlet-copy linB.nexpr, linB.nabs linB.nexpr -> linB.nexpr.
+nlet-copy (linB.ret Vs) B R :- !, inst-nabs B Vs E, ncopyprop E R.
+nlet-copy (linB.leaf (nvar V)) B R :- !, inst-nabs B [V] E, ncopyprop E R.
+nlet-copy E B (linB.let E B') :- linB.map-nabs ncopyprop B B'.
+
+func lcopyprop linB.lexpr -> linB.lexpr.
+lcopyprop (linB.llet E B) R :- !, lcopyprop E E', llet-copy E' B R.
+lcopyprop (linB.nlet E B) R :- !, ncopyprop E E', nllet-copy E' B R.
+lcopyprop (linB.lunpack D B) (linB.lunpack D B') :- !, linB.map-labs lcopyprop B B'.
+lcopyprop (linB.nunpack V B) (linB.nunpack V B') :- !, linB.map-nabs lcopyprop B B'.
+lcopyprop (linB.ldrop E) (linB.ldrop E') :- !, lcopyprop E E'.
+lcopyprop E E.
+
+func llet-copy linB.lexpr, linB.labs linB.lexpr -> linB.lexpr.
+llet-copy (linB.lret Ds) B R :- !, inst-labs B Ds E, lcopyprop E R.
+llet-copy (linB.lleaf (lvar D)) B R :- !, inst-labs B [D] E, lcopyprop E R.
+llet-copy E B (linB.llet E B') :- linB.map-labs lcopyprop B B'.
+
+func nllet-copy linB.nexpr, linB.nabs linB.lexpr -> linB.lexpr.
+nllet-copy (linB.ret Vs) B R :- !, inst-nabs B Vs E, lcopyprop E R.
+nllet-copy (linB.leaf (nvar V)) B R :- !, inst-nabs B [V] E, lcopyprop E R.
+nllet-copy E B (linB.nlet E B') :- linB.map-nabs lcopyprop B B'.
+
+func inst-nabs linB.nabs A, list nl -> A.
+inst-nabs (linB.nb _ B) [V|Vs] E :- inst-nabs (B V) Vs E.
+inst-nabs (linB.nend E) [] E.
+
+func inst-labs linB.labs A, list lin -> A.
+inst-labs (linB.lb _ B) [D|Ds] E :- inst-labs (B D) Ds E.
+inst-labs (linB.lend E) [] E.
+
+func copyprop-progB linB.prog -> linB.prog.
+copyprop-progB P P' :- linB.map-prog ncopyprop lcopyprop P P'.
 
 } % namespace copyprop

@@ -201,21 +201,29 @@ func dot1 linA.val, linA.val -> float.
 dot1 (real A) (real B) C :- C is A * B.
 dot1 (vtup Xs) (vtup Ys) C :- dot Xs Ys C.
 
-% Transpose U(J(P)), and check Theorem 7.1 on it, where ė is f.lin and ë is
-% f.lin^T, both at the tape computed by f.nonlin(x ;):
-% T(U(J(P))) type-checks, ⟨ẋ, ë[x; ÿ]⟩ = ⟨ė[x; ẋ], ÿ⟩, and
-% W[ë] + L_in ≤ W[ė] + L_out (L: the number of scalars in ẋ and in ÿ).
+% Transpose U(C(J(P))), clean it up with C, and check Theorem 7.1 on it,
+% where ė is f.lin and ë is f.lin^T, both at the tape computed by
+% f.nonlin(x ;): T(U(C(J(P)))) type-checks, ⟨ẋ, ë[x; ÿ]⟩ = ⟨ė[x; ẋ], ÿ⟩,
+% and W[ë] + L_in ≤ W[ė] + L_out (L: the number of scalars in ẋ and in ÿ).
+% Also check that C after T type-checks, leaves no nested let or copy, and
+% gives the same results at the same cost.
 func transpose-check string, linA.prog, list linA.val, list linA.val,
   list linA.val.
 transpose-check Name P Xs DXs DYs :-
-  j P PJ, unzip.unzip-prog PJ PU, transpose.transpose-prog PU PT,
+  j P PJ, unzip.unzip-prog PJ PU, transpose.transpose-prog PU PT0,
+  flatten.flatten-progB PT0 PT1, copyprop.copyprop-progB PT1 PT,
   ppB.tprog->string PT S, print S,
-  linB.to-linA PT AT,
-  check {calc (Name ^ ": T(U(J)) type-checks")} (of-prog AT),
+  linB.to-linA PT0 AT0, linB.to-linA PT AT,
+  check {calc (Name ^ ": T(U(C(J))) type-checks")} (of-prog AT0),
+  check {calc (Name ^ ": C after T type-checks, no nested let or copy is left")}
+    (of-prog AT, normal-prog AT),
   linB.to-linA PU AU, linA.drop-last AU AN,
   run AN Xs [] ONT _ _, std.rev ONT [Tape|_],
   run AU [Tape] DXs _ Ys CL,
   run AT [Tape] DYs _ Xbar CT,
+  run AT0 [Tape] DYs _ Xbar0 CT0,
+  check {calc (Name ^ ": C after T: same results, same cost")}
+    (approx-list Xbar Xbar0, CT = CT0),
   dot DXs Xbar Lhs, dot Ys DYs Rhs,
   evalA.scalars-list DXs Lin, evalA.scalars-list DYs Lout,
   print Name ": <ẋ, ë[x;ÿ]> =" Lhs " <ė[x;ẋ], ÿ> =" Rhs

@@ -1,6 +1,7 @@
-% Step flatten: let-floating (after J)
+% Cleanup C, part 1, flatten: let-floating (after J, and after T)
 %
-% Linear A to Linear A. J's rule JLet puts J(e1) as the bound expression of
+% Linear A to Linear A (flatten-prog), and Linear B to Linear B
+% (flatten-progB). J's rule JLet puts J(e1) as the bound expression of
 % a let, and J(e1) is often itself a block of lets, so J's output nests
 % lets. flatten floats them out:
 %   let x̄ = (let ȳ = a in b) in c   ⇝   let ȳ = a in let x̄ = b in c
@@ -9,6 +10,7 @@
 % nothing, so the result computes the same values at the same cost.
 
 accumulate linA.
+accumulate linB.
 
 namespace flatten {
 
@@ -39,5 +41,67 @@ float-into B E R :- float E B R.
 
 func flatten-prog prog -> prog.
 flatten-prog P P' :- map-prog flatten P P'.
+
+% --- Linear B ---------------------------------------------------------------------
+%
+% The same, on both kinds of Linear B expression. A linear let can float out
+% any binding construct; a non-linear let in a linear expression (nlet) can
+% float out a non-linear let or unpack, which become nlet and nunpack.
+
+func nflatten linB.nexpr -> linB.nexpr.
+nflatten (linB.let E B) R :- !,
+  nflatten E E', linB.map-nabs nflatten B B', nfloat E' B' R.
+nflatten (linB.unpack V B) (linB.unpack V B') :- !, linB.map-nabs nflatten B B'.
+nflatten (linB.drop E) (linB.drop E') :- !, nflatten E E'.
+nflatten E E.
+
+% nfloat E B: let E in B, in a non-linear expression.
+func nfloat linB.nexpr, linB.nabs linB.nexpr -> linB.nexpr.
+nfloat (linB.let E0 B0) B (linB.let E0 B0') :- !, linB.map-nabs (nfloat-into B) B0 B0'.
+nfloat (linB.unpack V B0) B (linB.unpack V B0') :- !,
+  linB.map-nabs (nfloat-into B) B0 B0'.
+nfloat E B (linB.let E B).
+
+func nfloat-into linB.nabs linB.nexpr, linB.nexpr -> linB.nexpr.
+nfloat-into B E R :- nfloat E B R.
+
+func lflatten linB.lexpr -> linB.lexpr.
+lflatten (linB.llet E B) R :- !,
+  lflatten E E', linB.map-labs lflatten B B', lfloat E' B' R.
+lflatten (linB.nlet E B) R :- !,
+  nflatten E E', linB.map-nabs lflatten B B', nlfloat E' B' R.
+lflatten (linB.lunpack D B) (linB.lunpack D B') :- !, linB.map-labs lflatten B B'.
+lflatten (linB.nunpack V B) (linB.nunpack V B') :- !, linB.map-nabs lflatten B B'.
+lflatten (linB.ldrop E) (linB.ldrop E') :- !, lflatten E E'.
+lflatten E E.
+
+% lfloat E B: let (; …) = E in B, with E linear.
+func lfloat linB.lexpr, linB.labs linB.lexpr -> linB.lexpr.
+lfloat (linB.llet E0 B0) B (linB.llet E0 B0') :- !,
+  linB.map-labs (lfloat-into B) B0 B0'.
+lfloat (linB.nlet E0 B0) B (linB.nlet E0 B0') :- !,
+  linB.map-nabs (lfloat-into B) B0 B0'.
+lfloat (linB.lunpack D B0) B (linB.lunpack D B0') :- !,
+  linB.map-labs (lfloat-into B) B0 B0'.
+lfloat (linB.nunpack V B0) B (linB.nunpack V B0') :- !,
+  linB.map-nabs (lfloat-into B) B0 B0'.
+lfloat E B (linB.llet E B).
+
+func lfloat-into linB.labs linB.lexpr, linB.lexpr -> linB.lexpr.
+lfloat-into B E R :- lfloat E B R.
+
+% nlfloat E B: let (… ;) = E in B, with E non-linear and B linear.
+func nlfloat linB.nexpr, linB.nabs linB.lexpr -> linB.lexpr.
+nlfloat (linB.let E0 B0) B (linB.nlet E0 B0') :- !,
+  linB.map-nabs (nlfloat-into B) B0 B0'.
+nlfloat (linB.unpack V B0) B (linB.nunpack V B0') :- !,
+  linB.map-nabs (nlfloat-into B) B0 B0'.
+nlfloat E B (linB.nlet E B).
+
+func nlfloat-into linB.nabs linB.lexpr, linB.nexpr -> linB.lexpr.
+nlfloat-into B E R :- nlfloat E B R.
+
+func flatten-progB linB.prog -> linB.prog.
+flatten-progB P P' :- linB.map-prog nflatten lflatten P P'.
 
 } % namespace flatten

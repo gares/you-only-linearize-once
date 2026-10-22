@@ -69,6 +69,33 @@ symb ndef nabs nfbody -> (nfn -> prog) -> prog.         % def f(v:τ ;) -> (σ ;
 symb ldef nabs (labs lfbody) -> (lfn -> prog) -> prog.  % def f(v:τ ; v̇:τ̇) -> (; σ̇)
 symb pnil prog.
 
+% --- Maps under binders -------------------------------------------------------
+
+% Apply K to the body of a binder spine, keeping the binders. K may change
+% the type of the body.
+func map-nabs (func A -> C), nabs A -> nabs C.
+map-nabs K (nb T B) (nb T B') :- pi x\ map-nabs K (B x) (B' x).
+map-nabs K (nend X) (nend X') :- K X X'.
+
+func map-labs (func A -> C), labs A -> labs C.
+map-labs K (lb T B) (lb T B') :- pi d\ map-labs K (B d) (B' d).
+map-labs K (lend X) (lend X') :- K X X'.
+
+func map-nbody (func nexpr -> nexpr), nfbody -> nfbody.
+map-nbody K (nbody Ss E) (nbody Ss E') :- K E E'.
+
+func map-lbody (func lexpr -> lexpr), lfbody -> lfbody.
+map-lbody K (lbody Ss E) (lbody Ss E') :- K E E'.
+
+% Apply KN to the body of every non-linear function, and KL to the body of
+% every linear one.
+func map-prog (func nexpr -> nexpr), (func lexpr -> lexpr), prog -> prog.
+map-prog _ _ pnil pnil.
+map-prog KN KL (ndef D P) (ndef D' P') :-
+  map-nabs (map-nbody KN) D D', pi f\ map-prog KN KL (P f) (P' f).
+map-prog KN KL (ldef D P) (ldef D' P') :-
+  map-nabs (map-labs (map-lbody KL)) D D', pi f\ map-prog KN KL (P f) (P' f).
+
 % --- Inclusion in Linear A ----------------------------------------------------
 %
 % Linear B is a sublanguage of Linear A, and to-linA is the inclusion (it

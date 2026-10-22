@@ -211,7 +211,9 @@ and runs it with its cost:
 4. `U(C(J(f)))`, unzipped into `f.nonlin` and `f.lin` in Linear B;
 5. `T(U(C(J(f))))`: `f.lin` transposed into `f.linᵀ`, which computes the
    gradient `f′(0.5) = −cos(0.5)` (reverse mode);
-6. `L(C(J(f)))`, the erased derivative, which computes `f` and `f′` with no
+6. `C(T(U(C(J(f)))))`, cleaned up again, on Linear B: `f.linᵀ` is now
+   `f.lin` run backwards, as in Figure 10;
+7. `L(C(J(f)))`, the erased derivative, which computes `f` and `f′` with no
    linear code.
 
 `make test` runs the tests, in seven groups: Linear A (type checker,
@@ -290,6 +292,7 @@ The predicates you will use most:
 | `forward.dj-def D D'` / `forward.dj-prog P P'` | J of a non-linear definition / program |
 | `forward.dj E E'` | J on an expression; each free `x` needs a clause `forward.dot x ẋ T` in the context |
 | `flatten.flatten-prog P P'` / `copyprop.copyprop-prog P P'` | the two parts of C, on a Linear A program |
+| `flatten.flatten-progB B B'` / `copyprop.copyprop-progB B B'` | the two parts of C, on a Linear B program |
 | `erase.lerase-prog P P'` | L of a program (adds the helper functions) |
 | `linB.to-linA B A` | a Linear B program as the Linear A program it is |
 | `unzip.unzip-prog P B` | U of a Linear A program into a Linear B one |
@@ -329,10 +332,10 @@ echo 'example.k-prog P, forward.dj-prog P PJ, erase.lerase-prog PJ PE, ppA.prog-
   | elpi run-tests.elpi
 ```
 
-To print reverse mode, `T(U(C(J(P))))`, for the program `k`:
+To print reverse mode, `C(T(U(C(J(P)))))`, for the program `k`:
 
 ```
-echo 'example.k-prog P, forward.dj-prog P PJ, flatten.flatten-prog PJ P1, copyprop.copyprop-prog P1 PC, unzip.unzip-prog PC PU, transpose.transpose-prog PU PT, ppB.tprog->string PT S, print S.' \
+echo 'example.k-prog P, forward.dj-prog P PJ, flatten.flatten-prog PJ P1, copyprop.copyprop-prog P1 PC, unzip.unzip-prog PC PU, transpose.transpose-prog PU PT, flatten.flatten-progB PT PT1, copyprop.copyprop-progB PT1 PTC, ppB.tprog->string PTC S, print S.' \
   | elpi run-tests.elpi
 ```
 
@@ -456,8 +459,8 @@ functions; they write `linA.sin` and so on.
   results flat (Figure 6), but its rules nest them: JLet makes `J(e1)` the
   bound expression of a `let`, and `J(e1)` is usually a block of lets
   itself. Unzipping then turns each block's result into a trivial rebinding
-  such as `let (m ;) = (c ;) in`. C removes both, in two parts, and runs
-  right after J:
+  such as `let (m ;) = (c ;) in`. T nests lets too. C removes both, in two
+  parts, and runs right after J and again right after T:
   - `flatten` floats lets out: `let x̄ = (let ȳ = a in b) in c` becomes
     `let ȳ = a in let x̄ = b in c`, and likewise when the bound expression is
     an unpacking let. In HOAS the variables `ȳ` cannot occur in `c`, so
@@ -468,8 +471,12 @@ functions; they write `linA.sin` and so on.
   - `let` and returns cost nothing, so C changes neither results nor cost.
     `C(J(f))` for the running example is exactly Figure 6 (with `−v̇`
     written as `-1.0 * v̇`).
-  - C works on Linear A. T produces Linear B, and its output can still
-    contain nested lets, which C doesn't touch.
+  - C works on both languages: `flatten-prog` / `copyprop-prog` on Linear
+    A, and `flatten-progB` / `copyprop-progB` on Linear B. On Linear B, a
+    linear `let` can float out any binding form, and a non-linear `let`
+    inside a linear expression floats out non-linear ones (they become
+    `nlet` and `nunpack`). After T, C makes `f.linᵀ` flat: for the running
+    example it is `f.lin` run backwards, as in Figure 10.
 - **Linearity erasure L (Section 4.5), namespace `erase`: `lerase`.** The paper gives L only in
   prose. `lerase-prog` follows it:
   - **Helper functions:** for every type at which linear `+`, `*` or `0̇` is
@@ -533,7 +540,7 @@ functions; they write `linA.sin` and so on.
   `transpose-prog` keeps the non-linear functions and replaces each linear
   function `f.lin` by its transpose `f.linᵀ`, which reads cotangents of
   `f.lin`'s results and returns cotangents of its linear parameters. Calls
-  to `f.lin` become calls to `f.linᵀ`. Reverse mode is `T ∘ U ∘ C ∘ J`: run
+  to `f.lin` become calls to `f.linᵀ`. Reverse mode is `C ∘ T ∘ U ∘ C ∘ J`: run
   `f.nonlin(x ;)` for the results and the tape, then `f.linᵀ(tape ; ÿ)`.
   - `transpose E Dd Cs E'` is `T(Δ̇, Δ̈ | ė) ⇝ ë`. `Dd` lists the linear
     variables `ė` consumes, with types, in the order in which `ë` returns
@@ -606,11 +613,12 @@ functions; they write `linA.sin` and so on.
   - T (`transpose-tests`): for the running example, `sq`, `h`, `m` and
     `k`, with `ė = f.lin` and `ë = f.linᵀ` at the tape of `f.nonlin(x ;)`:
     - `T(U(C(J(P))))` type-checks;
+    - `C` after T type-checks, leaves no nested let or copy, and gives the
+      same results at the same cost;
     - `⟨ẋ, ë[x; ÿ]⟩ = ⟨ė[x; ẋ], ÿ⟩`: `ë` is the transpose of `ė`
       (Theorem 7.1, claim 3);
     - `W[ë] + L_in ≤ W[ė] + L_out`, where `L` counts the scalars in `ẋ` and
       `ÿ` (Theorem 7.1, claim 2).
 
 Not done: checkpointing (the free choice in ULet to recompute a non-linear
-value in the linear part instead of putting it on the tape), and a cleanup
-for Linear B, to flatten the nested lets that T produces.
+value in the linear part instead of putting it on the tape).
