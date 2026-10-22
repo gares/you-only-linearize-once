@@ -195,35 +195,24 @@ You need [Elpi](https://github.com/LPCIC/elpi) 3.8 or later, which added the
 elpi -test linear_a.elpi
 ```
 
-Each test prints one line, then the examples are printed in the paper's
-notation. Then come the tests of `dj` and `lerase`, which print each
-transformed definition followed by `ok: …` lines, and finally `Success:`. A
-failing check prints `FAILED: …`. The exit code is 0 when all tests pass and 1
-when one fails, so the command also works in a script or in CI. Expected
-output (shortened here):
+The tests come in five groups: Linear A (type checker, interpreter,
+printer), `forward.dj`, `erase.lerase-prog`, Linear B, and
+`unzip.unzip-prog`. Each prints the
+programs it builds in the paper's notation, then `ok: …` lines, and finally
+`Success:`. A failing check prints `FAILED: …`. The exit code is 0 when all
+tests pass and 1 when one fails, so the command also works in a script or in
+CI. Expected output (shortened here):
 
 ```
-g : [r] [r] -> [r] [r]
+g : [linA.r] [linA.r] -> [linA.r] [linA.r]
 drop/dup example: ok
 linear var used twice: rejected
 unused non-linear var: rejected
 unpack example: ok
 program: ok
-run g(3 ; 1) = [real 9.000000] [real 9.000000] cost 2
-run dsin(0 ; 2) = [real 0.000000] [real 2.000000] cost 3
-run drop/dup(5 ; 7) = [] [real 7.000000, real 7.000000] cost 1
-run swap((1,2) ; (3,4)) = [real 2.000000, real 1.000000]
- [real 4.000000, real 3.000000] cost 0
-
-def f(a : R ; ċ : R) → (R ; R) =
-  let (e : R ;) = a * a in
-  let (; ṁ : R) = e * ċ in
-  (e ; ṁ)
-
-def g(a : R ; ċ : R) → (R ; R) =
-  f(a ; ċ)
+run g(3 ; 1) = [linA.real 9.000000] [linA.real 9.000000] cost 2
 ...
---- forward derivative J (dj) ---
+--- forward derivative J (forward.dj) ---
 def f(a : R ; ċ : R) → (R ; R) =
   let (; ė : R, ṁ : R) = dup(ċ) in
   let (n : R ;) = a * a in
@@ -232,47 +221,66 @@ def f(a : R ; ċ : R) → (R ; R) =
   let (; q̇ : R) = ȯ + ṗ in
   (n ; q̇)
 ok: sq^J type-checks
-sq^J(3 ; 1) = [real 9.000000] [real 6.000000] cost 4 (primal cost 1 )
-ok: sq^J(3 ; 1) = (9 ; 6)
 ...
---- linearity erasure L (lerase) ---
+--- linearity erasure L (erase.lerase-prog) ---
 ...
-ok: L(lt) computes the same result with the same cost
+--- Linear B (linB) ---
+...
+ok: a non-linear leaf in a linear expression is rejected
 ```
+
+**Namespaces.** Each part of [linear_a.elpi](linear_a.elpi) is in its own
+namespace, so queries use qualified names:
+
+| Namespace | Contents |
+|---|---|
+| `linA` | Linear A syntax (Figure 3) |
+| `typecheck` | type checker (Figure 4) |
+| `eval` | interpreter with the cost model (Section 4.3) |
+| `forward` | forward derivative J (Section 5) |
+| `erase` | linearity erasure L (Section 4.5) |
+| `pp` | pretty printer |
+| `linB` | Linear B syntax (Section 6), and its inclusion in Linear A |
+| `unzip` | unzipping U (Section 6), from Linear A to Linear B |
+| `example`, `exampleB` | ready-made Linear A and Linear B terms |
+| `test` | the checks run by `main` |
 
 **Run your own query.** Start `elpi linear_a.elpi`, then type a query at the
 `goal>` prompt, ending with a full stop. You can also pipe the query in:
 
 ```
-echo "example-g G, of-def G Ts LTs Ss LSs, run-def G [real 2.0] [real 0.5] Vs LVs Cost." \
+echo "example.g G, typecheck.of-def G Ts LTs Ss LSs, eval.run-def G [linA.real 2.0] [linA.real 0.5] Vs LVs Cost." \
   | elpi linear_a.elpi
 ```
 
 That query prints the term `G` and its types (`Ts LTs -> Ss LSs`, here
-`[r] [r] -> [r] [r]`), then the results: `Vs = [real 4.0]`,
-`LVs = [real 2.0]`, `Cost = 2`. When a query succeeds, the interactive prompt
-asks `More? (Y/n)`. Answer `n` to stop.
+`[linA.r] [linA.r] -> [linA.r] [linA.r]`), then the results:
+`Vs = [linA.real 4.0]`, `LVs = [linA.real 2.0]`, `Cost = 2`. When a query
+succeeds, the interactive prompt asks `More? (Y/n)`. Answer `n` to stop.
 
 The predicates you will use most:
 
 | Query | Meaning |
 |---|---|
-| `of E Ts LTs` | type of an expression (it must be closed) |
-| `of-def D Ts LTs Ss LSs` | check a definition: arguments `Ts ; LTs`, results `Ss ; LSs` |
-| `of-prog P` | check a whole program |
-| `run-def D Xs LXs Vs LVs Cost` | run one definition on non-linear inputs `Xs` and linear inputs `LXs` |
-| `run P Xs LXs Vs LVs Cost` | run a program; its last definition is the entry point |
-| `prog->string P S` | print a program in the paper's notation |
-| `def->string D S` | print one definition (named `f`) |
-| `expr->string E S` | print a closed expression |
-| `dj-def D D'` / `dj-prog P P'` | forward derivative J of a non-linear definition / program |
-| `dj Sigma E E'` | J on an expression; `Sigma` lists `sg x ẋ T` for each free variable |
-| `lerase-prog P P'` | linearity erasure L of a program (adds the helper functions) |
+| `typecheck.of E Ts LTs` | type of an expression (it must be closed) |
+| `typecheck.of-def D Ts LTs Ss LSs` | check a definition: arguments `Ts ; LTs`, results `Ss ; LSs` |
+| `typecheck.of-prog P` | check a whole program |
+| `eval.run-def D Xs LXs Vs LVs Cost` | run one definition on non-linear inputs `Xs` and linear inputs `LXs` |
+| `eval.run P Xs LXs Vs LVs Cost` | run a program; its last definition is the entry point |
+| `pp.prog->string P S` | print a program in the paper's notation |
+| `pp.def->string D S` | print one definition (named `f`) |
+| `pp.expr->string E S` | print a closed expression |
+| `forward.dj-def D D'` / `forward.dj-prog P P'` | forward derivative J of a non-linear definition / program |
+| `forward.dj E E'` | J on an expression; each free `x` needs a clause `forward.dot x ẋ T` in the context |
+| `erase.lerase-prog P P'` | linearity erasure L of a program (adds the helper functions) |
+| `linB.to-linA B A` | a Linear B program as the Linear A program it is |
+| `unzip.unzip-prog P B` | unzipping U of a Linear A program into a Linear B one |
+| `unzip.unzip-def D N L Ss T` | U of one definition: `f.nonlin` `N`, `f.lin` `L`, result types `Ss`, tape type `T` |
 
 To see an example in the paper's notation:
 
 ```
-echo 'example-dsin D, def->string D S, print S.' | elpi linear_a.elpi
+echo 'example.dsin D, pp.def->string D S, print S.' | elpi linear_a.elpi
 ```
 
 prints
@@ -289,26 +297,35 @@ To differentiate a definition, print it, and run it at `x = 3` in direction
 `ẋ = 1`:
 
 ```
-echo 'primal-sq D, dj-def D DJ, def->string DJ S, print S, run-def DJ [real 3.0] [real 1.0] Vs LVs C.' \
+echo 'example.sq D, forward.dj-def D DJ, pp.def->string DJ S, print S, eval.run-def DJ [linA.real 3.0] [linA.real 1.0] Vs LVs C.' \
   | elpi linear_a.elpi
 ```
 
-To get `F(x)` and `F'(x)` with no linear code, as in Section 5, apply `lerase`
-to the derivative and pass the direction as an ordinary argument:
+To get `F(x)` and `F'(x)` with no linear code, as in Section 5, erase the
+derivative and pass the direction as an ordinary argument:
 
 ```
-echo 'primal-prog P, dj-prog P PJ, lerase-prog PJ PE, prog->string PE S, print S, run PE [real 3.0, real 1.0] [] Vs _ C.' \
+echo 'example.k-prog P, forward.dj-prog P PJ, erase.lerase-prog PJ PE, pp.prog->string PE S, print S, eval.run PE [linA.real 3.0, linA.real 1.0] [] Vs _ C.' \
   | elpi linear_a.elpi
 ```
 
-Values are written `real 3.0` and `vtup [real 1.0, real 2.0]`. Types are `r`
-and `tup [r, r]`. Ready-made definitions to try:
+To see a Linear B program (the unzipped `dsin` of Figure 9) as Linear A:
 
-- for the type checker and interpreter: `example-g`, `example-dsin`,
-  `example-unpack`, `good-drop-dup`, `example-prog`, `example-lin-tup`, and
-  the ill-typed `bad-twice` and `bad-unused`;
-- non-linear inputs for `dj`: `primal-sq`, `primal-h`, `primal-m`, and the
-  program `primal-prog`.
+```
+echo 'exampleB.dsin-unzipped B, linB.to-linA B A, pp.prog->string A S, print S.' \
+  | elpi linear_a.elpi
+```
+
+Values are written `linA.real 3.0` and `linA.vtup [linA.real 1.0, linA.real 2.0]`.
+Types are `linA.r` and `linA.tup [linA.r, linA.r]`. Ready-made terms to try:
+
+- for the type checker and interpreter: `example.g`, `example.dsin`,
+  `example.swap`, `example.drop-dup`, `example.g-prog`, `example.lin-tup`,
+  and the ill-typed `example.bad-twice` and `example.bad-unused`;
+- non-linear inputs for `forward.dj`: `example.sq`, `example.h`, `example.m`,
+  and the program `example.k-prog`;
+- Linear B: `exampleB.dsin-nonlin`, `exampleB.dsin-lin`, and the program
+  `exampleB.dsin-unzipped`.
 
 **Reading the papers.** Both PDFs are in the repository root. The Tapenade
 report's PDF has no usable text layer: `pdftotext` returns garbled characters,
@@ -316,10 +333,14 @@ so read it in a PDF viewer.
 
 ## linear_a.elpi
 
-Done so far:
+Done so far. Each part is in its own namespace (see the table above), and
+each namespace starts with a `shorten linA.{…}` so its code can say `let`
+instead of `linA.let`. The two exceptions are `eval` and `test`, which don't
+shorten `sin`, `cos` and `exp`, so that `is` can still use the builtin
+functions; they write `linA.sin` and so on.
 
-- **Syntax (Figure 3), in HOAS, using Elpi's `data` / `symb` / `func`
-  declarations.**
+- **Syntax (Figure 3), namespace `linA`, in HOAS, using Elpi's `data` /
+  `symb` / `func` declarations.**
   - Non-linear variables, linear variables and function names are separate
     kinds (`nl`, `lin`, `fn`). Each binder is an Elpi λ that carries the
     variable's type.
@@ -333,7 +354,7 @@ Done so far:
     only the transformations in Sections 5–7 use.
   - Primitives: `sin`, `cos`, `exp`, `plus`, `mul`. Figure 3 lists sin, cos,
     exp, + and "…"; `mul` was added for the paper's example.
-- **Type checker (Figure 4).** `of E Ts LTs` stands for `Γ ; Γ̇ ⊢ e : (τ ; τ̇)`,
+- **Type checker (Figure 4), namespace `typecheck`.** `of E Ts LTs` stands for `Γ ; Γ̇ ⊢ e : (τ ; τ̇)`,
   with one clause per rule.
   - Each bound variable carries a fresh "used" mark, which is set when the
     variable occurs.
@@ -342,7 +363,7 @@ Done so far:
     once, `∪`).
   - When a binder goes out of scope, its mark must be set.
   - `of-def` checks a definition and `of-prog` checks a whole program.
-- **Interpreter with the Section 4.3 cost model.**
+- **Interpreter with the Section 4.3 cost model, namespace `eval`.**
   `eval E Vs LVs Cost` is big-step evaluation. Variables are bound through
   hypothetical `nlval` / `linval` clauses, and function names through
   `fndef`.
@@ -351,7 +372,8 @@ Done so far:
     discards. `let` and calls add up their parts. Everything else is free.
   - `run P Xs LXs Vs LVs Cost` runs a program. The paper does not say which
     function is a program's entry point; here it is the **last definition**.
-- **Pretty printer, in the paper's notation.** `prog->string`, `def->string`
+    `run-def` runs a single definition.
+- **Pretty printer, in the paper's notation, namespace `pp`.** `prog->string`, `def->string`
   and `expr->string` turn the HOAS terms back into the paper's syntax:
   `let (a : R ; ċ : R) = e in`, `⊗(…)` for tuples, `(v ; v̇)` for returns,
   `def f(…) → (… ; …) =` for definitions, and `0̇_R`, `dup(ȧ)`, `drop(e)`.
@@ -368,19 +390,34 @@ Done so far:
   - A `let` whose bound expression takes several lines is printed as
     `let (…) =`, then the expression indented, then `in`.
   - The paper's arity indices (`e^{m,n}`, `f^{o,p}_{m,n}`) are not printed.
-- **Forward derivative J (Section 5, Figure 7): `dj`.**
-  `dj Sigma E E'` is `J(Σ | e) ⇝ e'`. `dj-def` implements JDef: it turns
+- **Forward derivative J (Section 5, Figure 7), namespace `forward`: `dj`.**
+  `dj E E'` is `J(Σ | e) ⇝ e'`. `dj-def` implements JDef: it turns
   `def f(v:τ ;) → (σ ;)` into `def f^J(v:τ ; v̇:τ) → (σ ; σ)`. `dj-prog`
   differentiates every definition and renames each call `f(…)` to `f^J(…)`.
-  - Σ is an explicit list `sg x ẋ T` that maps each free variable to its
-    tangent and type. It holds exactly the free variables of the expression,
-    so each tangent is used exactly once.
+  - **Σ lives in the context.** It is one hypothetical clause `dot x ẋ T`
+    per primal variable in scope, mapping it to its tangent and type.
+    Extending Σ with `x ↦ ẋ` is loading `dot x ẋ T =!=> …`. `=!=>` works like
+    `==>` (it puts the new clause in front of the older ones), and it also
+    adds a cut at the end of the clause, so `dot` stops at the first match.
+    A newer clause for the same `x` therefore shadows the older one, the way
+    the extended Σ does in the rules. The file never uses `=>`: every
+    hypothetical clause is loaded with `==>`, or with `=!=>` when it must
+    shadow.
   - **Introducing dup:** a primal variable needed more than once gets its
-    tangent duplicated with `dup`. One helper, `with-tans`, does this for
-    JLet (a variable free in both the bound expression and the body), for
-    JUnpackB (a tuple used again after it is unpacked), and for repeated
-    arguments in JRet, JApp, JTup and JPrimMul (for example `x * x`). The
-    paper describes these variants but leaves them out of Figure 7.
+    tangent duplicated with `dup`, and each copy is loaded as a newer `dot`
+    clause for the part of the code that uses it. Two helpers do this:
+    - `dup-each` handles JLet. A variable `u` free in both the bound
+      expression and the body gets one `ẇ, ż = dup(u̇)`, with `ẇ` and `ż`
+      fresh. `e1` runs under `u ↦ ẇ` and `e2` under `u ↦ ż`, as in Figure 7.
+    - `dup-each` also handles JUnpackB, a tuple used again after it is
+      unpacked: the unpack takes the first copy and the body the second.
+    - `with-tans` handles repeated arguments in JRet, JApp, JTup and
+      JPrimMul, for example `x * x`. A variable used `n` times gets a chain
+      of `n − 1` dups.
+
+    The paper describes these variants but leaves them out of Figure 7.
+    Variables used on only one side keep their outer tangent, so Σ₁ and Σ₂
+    of JLet never have to be built explicitly.
   - **Primitive rules:** JPrimSin and JPrimMul are as in Figure 7. The paper
     gives no rules for the other primitives, so these are derived:
     - `cos`: `(cos v ; (-1.0 * sin v) * v̇)`;
@@ -391,7 +428,7 @@ Done so far:
   - **Literals (JLit):** `l` becomes `(l ; 0̇_R)`.
   - **Input check:** `dj` has no rules for linear syntax, so it fails on
     input that is not purely non-linear.
-- **Linearity erasure L (Section 4.5): `lerase`.** The paper gives L only in
+- **Linearity erasure L (Section 4.5), namespace `erase`: `lerase`.** The paper gives L only in
   prose. `lerase-prog` follows it:
   - **Helper functions:** for every type at which linear `+`, `*` or `0̇` is
     used, a fresh non-linear function is defined before the program. Tuples
@@ -405,7 +442,52 @@ Done so far:
     let becomes a non-linear one.
   - **Single definitions:** `lerase-prog` works on whole programs, because it
     adds definitions. Wrap a single definition as `def D x\ pnil`.
-- **Tests (`main`):**
+- **Linear B (Section 6, Definition 6.1), namespace `linB`.** Linear B is
+  the sublanguage of Linear A in which (1) every function and expression
+  returns only non-linear or only linear results, and (2) an expression with
+  non-linear results reads no linear variable, not even to drop it. Both
+  restrictions are in the syntax:
+  - Expressions come in two kinds. `nexpr` has non-linear results: `ret`,
+    `let`, `unpack`, `app`, `drop`, and `leaf`. `lexpr` has linear results:
+    `lret`, `llet`, `lunpack`, `lapp`, `ldrop`, `lleaf`, plus `nlet` and
+    `nunpack`, which bind non-linear intermediates inside a linear
+    expression (as `f.lin` does in Figure 9).
+  - An `nexpr` has no constructor that mentions a linear variable, so
+    restriction (2) holds by construction.
+  - Binder spines are all non-linear (`nabs`) or all linear (`labs`).
+    Functions are non-linear (`nfn`, defined by `ndef`, `(v ;) → (σ ;)`) or
+    linear (`lfn`, defined by `ldef`, `(v ; v̇) → (; σ̇)`).
+  - Types and variables are those of Linear A. Leaves (variables, literals,
+    tuples, primitives, and their linear counterparts) are Linear A leaves
+    wrapped by `leaf` or `lleaf`, as in the paper's ULeaf and ULinLeaf.
+  - `to-linA` is the inclusion of Linear B in Linear A, and it rejects a
+    leaf of the wrong kind. Through it, Linear B programs are type-checked,
+    run and printed with the Linear A tools.
+- **Unzipping U (Section 6, Figure 8), namespace `unzip`.** `unzip-prog`
+  turns a Linear A program into a Linear B one. Each definition `f` becomes
+  `f.nonlin`, which computes the non-linear results and returns the tape,
+  followed by `f.lin`, which reads the tape and computes the linear results.
+  - **Representation:** `U(e) ⇝ E; e′; ė′` is a context `E`, a chain of
+    non-linear `clet`/`cunpack` binders in HOAS, whose `hole` holds `e′` and
+    `ė′`. `plug` replaces the hole, and composing contexts (as in ULet) is
+    plugging one into the other.
+  - **Rules:** one clause per rule of Figure 8: URet, ULet, UUnpack,
+    ULinUnpack, UApp, ULeaf, ULinLeaf, UDrop, and UDef in `unzip-def`.
+  - **Moving binders:** ULet and ULinUnpack bind `v̇` around `ė′` only, and
+    UDef binds the tape variables inside `f.lin`'s linear parameters. In the
+    input those variables are bound further out. A HOAS binder can't be
+    moved by unification, so these rules copy `ė′` with a renaming. The
+    renaming is `cp-nl x y` / `cp-lin ẋ ẏ`, loaded with `=!=>`, and every
+    other variable is copied unchanged.
+  - **The tape:** the variables bound by `f`'s non-linear parameters or by
+    `E` that `ė′` reads, in binding order. `f.nonlin` returns them as one
+    tuple, `f.lin` unpacks them from its first argument, and a call
+    `f(v ; v̇)` becomes `f.nonlin(v ;)` and then `f.lin(tape ; v̇)` (UApp).
+  - **Two simplifications:** ULet produces `let (;) = (;) in E` when the
+    `let` binds no non-linear variable and its expression has no non-linear
+    part. It produces `let (;) = (;) in ė` in the symmetric linear case. Both
+    are left out. They are identities that cost nothing.
+- **Tests (`main`, namespace `test`):**
   - The paper's `g(x ; ẏ) = (x² ; x²ẏ)` type-checks. Run as `g(3 ; 1)` it
     returns `(9 ; 9)` with cost 2.
   - A `drop`/`dup` example type-checks.
@@ -416,7 +498,7 @@ Done so far:
   - The forward derivative of `sin` runs as `dsin(0 ; 2) = (0 ; 2)` with
     cost 3.
   - The examples are printed in the paper's notation.
-  - J (`test-dj`):
+  - J (`forward-tests`):
     - `sq(x) = x*x` gives `(9 ; 6)` at `(3 ; 1)`.
     - `h(x) = exp(x sin x)` matches the closed-form derivative at `0.5`.
     - A tuple example `m` covers JUnpackB and JLit.
@@ -425,13 +507,28 @@ Done so far:
     - J rejects linear input.
     - J's cost is a constant factor over the primal (for example 1 → 4 for
       `sq`).
-  - L (`test-lerase`):
+  - L (`erase-tests`):
     - `L(J(k))(3, 1 ;)` gives `(12, 7 ;)`.
     - Linear `+`, `*` and `0̇` on tuples go through the generated helpers.
     - `dup` disappears and `lunpack` becomes `unpack`.
     - Every output type-checks.
     - Results and cost are the same as before erasure (Lemma 4.4).
+  - Linear B (`linB-tests`):
+    - The unzipped `dsin` of Figure 9 (`exampleB.dsin-unzipped`) type-checks
+      in Linear A.
+    - Running `f.nonlin(0.5 ;)` and then `f.lin(tape ; 2)` gives the same
+      result as `dsin(0.5 ; 2)`.
+    - A linear leaf in a non-linear expression is rejected, and so is a
+      non-linear leaf in a linear one.
+  - U (`unzip-tests`):
+    - `U(J(sin))` is exactly the hand-written unzipped `dsin` of Figure 9.
+    - For `sq`, `h`, `m` and the two-function program `k`, `U(J(P))`
+      type-checks.
+    - For each of them, running `f.nonlin(x ;)` and then
+      `f.lin(tape ; ẋ)` gives the results of `J(P)(x ; ẋ)`, and the two
+      costs add up exactly to J's cost (Theorem 6.2: unzipping preserves
+      work).
 
-Next steps would be unzipping U (Section 6) and transposition T (Section 7).
-Reverse mode would then be `T ∘ U ∘ J`, and the gradient could be checked
-against `dj` on the examples.
+The next step is transposition T (Section 7) on Linear B. Reverse mode
+would then be `T ∘ U ∘ J`, and the gradient could be checked against `dj` on
+the examples.
